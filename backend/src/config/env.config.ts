@@ -40,6 +40,21 @@ export const envSchema = z.object({
   JWT_REFRESH_SECRET: z.string().default('dev-only-insecure-refresh-secret'),
   JWT_ACCESS_EXPIRES_IN: z.string().default('15m'),
   JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
+  JWT_ISSUER: z.string().default('coachx'),
+  JWT_AUDIENCE: z.string().default('coachx-api'),
+
+  // Phase 4 — Authentication, Identity & RBAC. MFA_ENCRYPTION_KEY encrypts
+  // TOTP secrets at rest (application-layer AES-256-GCM, on top of
+  // whatever database/disk encryption the deployment target provides) —
+  // MUST be a real, unique 32-byte key in production; the dev-only
+  // default below is deliberately obviously-fake, same convention as the
+  // JWT dev secrets above.
+  MFA_ENCRYPTION_KEY: z.string().default('dev-only-insecure-mfa-encryption-key-32b'),
+
+  AUTH_PASSWORD_RESET_TOKEN_TTL_MIN: z.coerce.number().int().positive().default(30),
+  AUTH_EMAIL_VERIFICATION_TOKEN_TTL_HOURS: z.coerce.number().int().positive().default(24),
+  AUTH_LOGIN_LOCKOUT_THRESHOLD: z.coerce.number().int().positive().default(5),
+  AUTH_LOGIN_LOCKOUT_DURATION_MIN: z.coerce.number().int().positive().default(15),
 
   SUPABASE_URL: z.string().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
@@ -112,6 +127,16 @@ export const config = {
     refreshSecret: env.JWT_REFRESH_SECRET,
     accessExpiresIn: env.JWT_ACCESS_EXPIRES_IN,
     refreshExpiresIn: env.JWT_REFRESH_EXPIRES_IN,
+    issuer: env.JWT_ISSUER,
+    audience: env.JWT_AUDIENCE,
+  },
+
+  auth: {
+    mfaEncryptionKey: env.MFA_ENCRYPTION_KEY,
+    passwordResetTokenTtlMin: env.AUTH_PASSWORD_RESET_TOKEN_TTL_MIN,
+    emailVerificationTokenTtlHours: env.AUTH_EMAIL_VERIFICATION_TOKEN_TTL_HOURS,
+    loginLockoutThreshold: env.AUTH_LOGIN_LOCKOUT_THRESHOLD,
+    loginLockoutDurationMin: env.AUTH_LOGIN_LOCKOUT_DURATION_MIN,
   },
 
   storage: {

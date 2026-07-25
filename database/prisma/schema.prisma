@@ -173,3 +173,394 @@ enum IdempotencyStatus {
 
   @@map("idempotency_status")
 }
+
+// ============================================================================
+// Phase 4 — Authentication, Identity & RBAC
+//
+// Owner: 003-auth-identity-onboarding-dashboard (auth/identity/session
+// models) and 001-product-vision-governance (Role/Permission RBAC engine,
+// per 001/plan.md's Project Structure `rbac/` module and FR-084–FR-089).
+// Scope is deliberately narrower than either spec's full entity list —
+// see docs/auth/TRACEABILITY.md for exactly which FRs each model below
+// implements and which are explicitly deferred (mobile OTP, Google/Apple
+// OAuth, SMS/email 2FA, full profile management, account merge/export).
+//
+// NOTE on architecture: 001/plan.md and 003/plan.md both describe a
+// NestJS backend (`backend/src/modules/...`). The ACTUAL, already-built
+// and approved backend (Phases 1–3) is plain Express + TypeScript with a
+// Clean Architecture layering (routes/controllers/services/repositories),
+// not NestJS. This is a confirmed spec-vs-implementation conflict,
+// reported in the Phase 4 final report rather than silently resolved —
+// the models/FRs below are implemented against the REAL, already-approved
+// Express/Prisma architecture, not the plan.md's NestJS assumption.
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// User — the root account record (003 Key Entity "User": "The root account
+// record tying a single person to one primary platform identity"; FR-001).
+// Combines 001's "User Account" and 003's private-identity fields per
+// FR-002 ("store authentication data... as a record separate from the
+// user's PUBLIC profile data" — the separation this schema honors is
+// User [private] vs UserProfile [public], not a third "Account" model).
+// ----------------------------------------------------------------------------
+model User {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Lowercase-normalized per FR-017. Unique per FR-001 (exactly one
+  /// primary identity per person).
+  email           String    @unique @db.VarChar(255)
+  emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz(6)
+
+  /// FR-064: account lifecycle status. Scope note: this schema
+  /// implements PENDING_VERIFICATION / ACTIVE / LOCKED / SUSPENDED /
+  /// DEACTIVATED / DELETED — the 10-state list in FR-064 also names
+  /// "onboarding incomplete", "restricted" (sub-flag, not a status), and
+  /// "merged", deferred per docs/auth/TRACEABILITY.md (onboarding is
+  /// 003 US2, out of Phase 4 scope; account merge FR-131 needs
+  /// cross-feature purchase/progress data that doesn't exist yet).
+  status AccountStatus @default(PENDING_VERIFICATION)
+
+  /// FR-062/FR-141: failed-login lockout tracking. Full risk-signal
+  /// evaluation (impossible travel, malicious IP, new-country — FR-062)
+  /// is deferred — see docs/auth/TRACEABILITY.md — this covers only the
+  /// repeated-failures signal, which needs no external provider.
+  failedLoginCount Int       @default(0) @map("failed_login_count")
+  lockedUntil      DateTime? @map("locked_until") @db.Timestamptz(6)
+
+  /// FR-050: mandatory-2FA gate for privileged roles is evaluated against
+  /// this flag by the authorization layer, not stored redundantly per role.
+  mfaEnabled Boolean @default(false) @map("mfa_enabled")
+
+  /// Soft-delete / anonymization marker (FR-133). Distinct from `status`:
+  /// `status = DELETED` is the user-facing lifecycle state; `deletedAt`
+  /// is the technical anonymization timestamp, per
+  /// docs/database/ARCHITECTURE.md §9's soft-delete standard.
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  profile            UserProfile?
+  credentials        Credential[]
+  sessions           Session[]
+  roles              UserRole[]
+  mfaCredential      MfaCredential?
+  recoveryCodes      RecoveryCode[]
+  passwordResets     PasswordResetToken[]
+  emailVerifications EmailVerificationToken[]
+  loginAttempts      LoginAttempt[]
+
+  @@index([status])
+  @@map("users")
+}
+
+enum AccountStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  LOCKED
+  SUSPENDED
+  DEACTIVATED
+  DELETED
+
+  @@map("account_status")
+}
+
+// ----------------------------------------------------------------------------
+// UserProfile — public-facing identity, deliberately separate from `User`
+// per FR-002/FR-070 ("private identity fields... separately from public
+// profile fields"). Deliberately MINIMAL for Phase 4: only what
+// registration needs (display name, optional username slot). The full
+// profile-management surface (photo upload, visibility controls, username
+// change policy — FR-071–FR-076) is 003/tasks.md's own "Phase D2" —
+// explicitly scoped as a supplementary phase there, not part of Phase 4's
+// auth/identity/RBAC mandate. See docs/auth/TRACEABILITY.md.
+// ----------------------------------------------------------------------------
+model UserProfile {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @unique @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  displayName String  @map("display_name") @db.VarChar(120)
+  username    String? @unique @db.VarChar(50)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("user_profiles")
+}
+
+// ----------------------------------------------------------------------------
+// Credential — one login method linked to a User (FR-001: "multiple login
+// methods... can be linked" to one identity; FR-007: architecture ready
+// for future providers). Only PASSWORD is implemented in Phase 4 — GOOGLE/
+// APPLE/OTP_MOBILE are modeled in the enum for forward-compatibility per
+// FR-007 but have no implementation yet (deferred, see
+// docs/auth/TRACEABILITY.md).
+// ----------------------------------------------------------------------------
+model Credential {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type CredentialType
+
+  /// Argon2id hash (FR-138). Only populated for type = PASSWORD. Never
+  /// logged, never included in an API response — see
+  /// backend/src/auth/password.util.ts.
+  passwordHash String? @map("password_hash") @db.VarChar(255)
+
+  /// Reserved for future OAuth providers (FR-007) — the provider's
+  /// opaque subject identifier. Unused while only PASSWORD is implemented.
+  providerSubject String? @map("provider_subject") @db.VarChar(255)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([userId, type])
+  @@map("credentials")
+}
+
+enum CredentialType {
+  PASSWORD
+  GOOGLE
+  APPLE
+  OTP_MOBILE
+
+  @@map("credential_type")
+}
+
+// ----------------------------------------------------------------------------
+// Session — one authenticated session + its current refresh token (FR-055,
+// FR-056). Refresh-token rotation and reuse detection (FR-056, "Refresh
+// Tokens and Session Management" §6 of the Phase 4 brief) are implemented
+// by rotating `refreshTokenHash`/`refreshTokenFamily` in place rather than
+// a separate RefreshToken table — a session's current refresh token IS the
+// session's live rotation state; a mismatch against the stored hash on
+// presentation is the reuse-detection signal (see
+// backend/src/auth/session.service.ts).
+// ----------------------------------------------------------------------------
+model Session {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Hash of the current valid refresh token for this session — never the
+  /// raw token (FR-056, "store token hashes, not raw refresh tokens").
+  refreshTokenHash String @unique @map("refresh_token_hash") @db.VarChar(64)
+
+  /// Stable identifier for this session's rotation lineage — every
+  /// rotated refresh token shares the same family. Presenting a
+  /// non-current hash for a still-active family is the reuse signal that
+  /// revokes the entire family (FR-056).
+  tokenFamily String @map("token_family") @db.VarChar(64)
+
+  revoked       Boolean   @default(false)
+  revokedAt     DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revokedReason String?   @map("revoked_reason") @db.VarChar(100)
+
+  /// FR-055: device/session metadata, only where allowed (§6 — no
+  /// precise-location tracking without a configured geo-IP provider,
+  /// see docs/auth/TRACEABILITY.md).
+  deviceName String? @map("device_name") @db.VarChar(255)
+  userAgent  String? @map("user_agent") @db.VarChar(512)
+  ipAddress  String? @map("ip_address") @db.VarChar(45)
+
+  lastActiveAt DateTime @default(now()) @map("last_active_at") @db.Timestamptz(6)
+  expiresAt    DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([userId, revoked])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// ----------------------------------------------------------------------------
+// RBAC — Role / Permission / RolePermission / UserRole. Canonical owner:
+// 001-product-vision-governance (FR-084–FR-089; 001/plan.md's `rbac/`
+// module). 003 explicitly reuses this rather than redefining it
+// (003/spec.md FR-067/FR-068, 003/tasks.md T009). Seeded with exactly the
+// 12 roles named in 001 FR-084–FR-086 / 003 FR-067 — "do not invent dozens
+// of placeholder permissions" per the Phase 4 brief honored by seeding
+// only the baseline permission set documented in
+// docs/auth/RBAC_MATRIX.md, not a speculative full catalog.
+// ----------------------------------------------------------------------------
+model Role {
+  id          String  @id @default(uuid()) @db.Uuid
+  /// Canonical machine name, e.g. "platform_admin" (FR-084–FR-086).
+  name        String  @unique @db.VarChar(50)
+  description String? @db.VarChar(255)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  permissions RolePermission[]
+  users       UserRole[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id  String @id @default(uuid()) @db.Uuid
+  /// Discrete, action-based identifier per 003 FR-068, e.g.
+  /// "course.view", "payment.refund", "user.suspend".
+  key String @unique @db.VarChar(100)
+
+  description String?  @db.VarChar(255)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+/// Prevents duplicate role/permission ownership (Phase 4 brief §10) via
+/// the @@unique([roleId, permissionId]) constraint below.
+model RolePermission {
+  roleId       String @map("role_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+/// Prevents duplicate role ownership (Phase 4 brief §10) via the
+/// @@unique([userId, roleId]) constraint below — a user may hold more
+/// than one role (e.g. Paid Member + Mentor), but never the same role twice.
+model UserRole {
+  userId String @map("user_id") @db.Uuid
+  roleId String @map("role_id") @db.Uuid
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  assignedAt DateTime @default(now()) @map("assigned_at") @db.Timestamptz(6)
+  /// FR-130: role changes require a reason and are audited (via the
+  /// shared AuditEvent table, not duplicated here).
+  assignedBy String?  @map("assigned_by") @db.Uuid
+  reason     String?  @db.VarChar(500)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+// ----------------------------------------------------------------------------
+// PasswordResetToken / EmailVerificationToken — single-use, hashed,
+// expiring tokens (FR-024–FR-027 verification; FR-043–FR-046 reset).
+// Hashed storage per the Phase 4 brief §2 ("store token hashes, not raw
+// tokens") — mirrors the pattern already established by Phase 3's
+// IdempotencyKey/AuditEvent hashing conventions.
+// ----------------------------------------------------------------------------
+model PasswordResetToken {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  tokenHash String    @unique @map("token_hash") @db.VarChar(64)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  ipAddress String?  @map("ip_address") @db.VarChar(45)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("password_reset_tokens")
+}
+
+model EmailVerificationToken {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  tokenHash String    @unique @map("token_hash") @db.VarChar(64)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("email_verification_tokens")
+}
+
+// ----------------------------------------------------------------------------
+// MfaCredential / RecoveryCode — TOTP-based 2FA (FR-050–FR-054). Only
+// authenticator-app TOTP + recovery codes are implemented — SMS OTP and
+// email OTP as 2FA *methods* (FR-051) are deferred pending a configured
+// SMS/email provider, per docs/auth/TRACEABILITY.md and the Phase 4
+// brief's own "if the specification does not choose a concrete MFA
+// method, stop and report" guidance (TOTP is the one method requiring no
+// external provider, so it is the one implemented now).
+// ----------------------------------------------------------------------------
+model MfaCredential {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @unique @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Encrypted (AES-256-GCM, application-layer) TOTP secret — never
+  /// returned after enrollment completes (Phase 4 brief §9).
+  encryptedSecret String @map("encrypted_secret") @db.VarChar(255)
+
+  enabled      Boolean   @default(false)
+  enabledAt    DateTime? @map("enabled_at") @db.Timestamptz(6)
+  /// Replay protection (FR-054/§9): the last successfully-consumed TOTP
+  /// step, so the same 30s code cannot be replayed within its own window.
+  lastUsedStep BigInt?   @map("last_used_step")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("mfa_credentials")
+}
+
+model RecoveryCode {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Hashed (FR-053: "one-time-use, hashed-storage recovery codes").
+  codeHash String    @map("code_hash") @db.VarChar(64)
+  usedAt   DateTime? @map("used_at") @db.Timestamptz(6)
+
+  /// Regenerating invalidates all previously issued codes (FR-053) —
+  /// implemented by generating a new `batchId` and only ever accepting
+  /// unused codes from the CURRENT batch.
+  batchId String @map("batch_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([userId, batchId])
+  @@map("recovery_codes")
+}
+
+// ----------------------------------------------------------------------------
+// LoginAttempt — operational rate-limiting/lockout data (FR-062 repeated-
+// failures signal). Deliberately separate from the immutable AuditEvent
+// trail: this is short-lived, prunable operational data used for a
+// rolling-window count, not a permanent compliance record (though every
+// login success/failure is ALSO recorded in AuditEvent for audit
+// purposes — see backend/src/auth/login.service.ts).
+// ----------------------------------------------------------------------------
+model LoginAttempt {
+  id     String  @id @default(uuid()) @db.Uuid
+  userId String? @map("user_id") @db.Uuid
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Kept even when no matching user was found (unknown-email login
+  /// attempts still count toward IP-level throttling upstream).
+  emailAttempted String  @map("email_attempted") @db.VarChar(255)
+  succeeded      Boolean
+  ipAddress      String? @map("ip_address") @db.VarChar(45)
+  userAgent      String? @map("user_agent") @db.VarChar(512)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([userId, createdAt])
+  @@index([emailAttempted, createdAt])
+  @@map("login_attempts")
+}
