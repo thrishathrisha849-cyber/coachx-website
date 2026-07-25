@@ -43,6 +43,21 @@ jobs:
         env:
           DATABASE_URL: postgresql://coachx:coachx@localhost:5432/coachx_ci?schema=public
 
+      # MUST run before typecheck/test/build, for the same reason as
+      # "Build shared package" above: backend/src/database/*.ts imports
+      # `@prisma/client`'s generated types (PrismaClient, Prisma.*, the
+      # AuditEvent/IdempotencyKey model types) which do not exist from a
+      # bare `npm ci` alone — `@prisma/client`'s own postinstall hook is
+      # not reliable enough in an npm-workspaces monorepo to depend on
+      # implicitly (confirmed during Phase 3 validation: manually
+      # clearing the generated client and reinstalling the bare package
+      # left it in a broken, ungeneratable-without-this-step state).
+      - name: Generate Prisma Client
+        working-directory: database
+        run: npx prisma generate
+        env:
+          DATABASE_URL: postgresql://coachx:coachx@localhost:5432/coachx_ci?schema=public
+
       - name: Lint
         run: npm run lint
 

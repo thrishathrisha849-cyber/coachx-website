@@ -22,11 +22,8 @@ done
 echo "==> Validating Prisma schema..."
 npm run db:validate
 
-echo "==> Generating Prisma client (skipped: no models defined yet — Phase 1 is schema-only)..."
-if ! npm run db:generate; then
-  echo "    (expected in Phase 1 — 'prisma generate' requires at least one model;"
-  echo "     this resolves automatically once the first feature adds its models.)"
-fi
+echo "==> Generating Prisma client..."
+npm run db:generate
 
 if command -v flutter >/dev/null 2>&1; then
   echo "==> Installing Flutter dependencies..."

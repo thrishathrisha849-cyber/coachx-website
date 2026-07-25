@@ -1,10 +1,18 @@
 // CoachX Enterprise Platform — Prisma Schema
 //
-// Phase 1 (Project Foundation) scope: datasource + generator only.
-// No feature/domain models are defined here yet — those are added
-// feature-by-feature in later implementation phases, following the
-// entity definitions in `specs/<feature>/spec.md` and the ownership
-// boundaries recorded in each feature's `plan.md`.
+// Phase 3 (Database & Shared Data Architecture) scope: shared TECHNICAL
+// models only — cross-cutting infrastructure every future business
+// feature writes to or reads from, never a business/domain entity.
+//
+// Every model below has a specific, documented justification in
+// docs/database/SCHEMA_OWNERSHIP.md — nothing here was added just to
+// give Prisma something to generate. See that file's "What is
+// deliberately NOT here yet" section for the models considered and
+// rejected as premature (Tenant/Organization, transactional Outbox).
+//
+// Naming convention (see docs/database/ARCHITECTURE.md §1): PascalCase
+// model names in the Prisma/TypeScript layer, mapped via @@map/@map to
+// snake_case table/column names in actual PostgreSQL.
 
 generator client {
   provider = "prisma-client-js"
@@ -15,12 +23,153 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Example (commented out intentionally — do not uncomment until the
-// owning feature, 001-product-vision-governance / 003-auth-identity-
-// onboarding-dashboard, is actually implemented):
+// ============================================================================
+// AuditEvent — immutable, append-only audit trail.
 //
-// model User {
-//   id        String   @id @default(cuid())
-//   createdAt DateTime @default(now())
-//   updatedAt DateTime @updatedAt
-// }
+// Owner: platform-wide (Constitution "Security & Compliance Baseline":
+// "All administrative, financial, and AI-copilot actions are captured
+// in an immutable audit log"; Constitution Article IV, Historical
+// Immutability). Referenced by 001-product-vision-governance FR-077
+// ("Every administrative configuration change MUST be recorded in an
+// audit trail") and FR-096 (no sensitive data in plain text in logs).
+//
+// This is intentionally NOT a business entity owned by any single
+// feature — it is the shared table every future feature's own
+// audit-relevant actions (role changes, refunds, content publishes,
+// AI-copilot actions, etc.) write into, the same way every feature
+// already shares the backend's logger/error-handler from Phase 2.
+//
+// IMMUTABLE BY DESIGN: no `updatedAt` field and no soft-delete flag —
+// unlike every other future table's standard pattern (see
+// docs/database/ARCHITECTURE.md §9), an audit record is never updated
+// or deleted after creation. If a recorded action turns out to be
+// wrong, a NEW compensating AuditEvent is written; the original is
+// never modified.
+//
+// Actor references are deliberately decoupled (nullable string IDs,
+// not foreign keys) because Feature 003 (Authentication) does not
+// exist yet — see docs/database/AUDITABILITY.md for the migration path
+// once a real User table exists.
+// ============================================================================
+model AuditEvent {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// When the recorded action actually occurred (not when the row was
+  /// written — for this table today the two are effectively the same,
+  /// but the distinction matters once replayed/backfilled events exist).
+  occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+
+  /// Who performed the action. Decoupled from any auth table on purpose
+  /// (see docs/database/AUDITABILITY.md) — `actorId` is just an opaque
+  /// string today, not a foreign key.
+  actorType ActorType @default(UNKNOWN) @map("actor_type")
+  actorId   String?   @map("actor_id") @db.VarChar(191)
+
+  /// What happened, in a dotted, namespaced form, e.g.
+  /// "admin.membership_tier.updated", "ai.recommendation.generated".
+  action String @db.VarChar(191)
+
+  /// What the action was performed on, if applicable.
+  resourceType String? @map("resource_type") @db.VarChar(191)
+  resourceId   String? @map("resource_id") @db.VarChar(191)
+
+  /// Cross-cutting request tracing — mirrors the backend's
+  /// X-Request-Id (Phase 2, request-id.middleware.ts) so a single HTTP
+  /// request's audit events can be reconstructed end-to-end.
+  correlationId String? @map("correlation_id") @db.VarChar(191)
+  requestId     String? @map("request_id") @db.VarChar(191)
+
+  /// Which deployable produced this event — useful once more than one
+  /// backend service exists (per 064's eventual service-mesh model).
+  sourceService String @default("coachx-backend") @map("source_service") @db.VarChar(100)
+
+  ipAddress String? @map("ip_address") @db.VarChar(45)
+  userAgent String? @map("user_agent") @db.VarChar(512)
+
+  /// Redacted (see backend/src/utils/redact.ts) before being persisted
+  /// — never store a raw password/token/secret here even transiently.
+  beforeState Json? @map("before_state")
+  afterState  Json? @map("after_state")
+
+  reason   String? @db.VarChar(1000)
+  metadata Json?
+
+  @@index([actorType, actorId])
+  @@index([resourceType, resourceId])
+  @@index([correlationId])
+  @@index([occurredAt])
+  @@map("audit_events")
+}
+
+enum ActorType {
+  USER
+  SYSTEM
+  SERVICE
+  UNKNOWN
+
+  @@map("actor_type")
+}
+
+// ============================================================================
+// IdempotencyKey — generic, scope-namespaced idempotency ledger.
+//
+// Owner: platform-wide (Constitution Article I, Server-Authoritative
+// State: "Payment success, course/lesson completion, gamification
+// point awards, quiz results, and AI-driven decisions are only
+// finalized after backend verification (signed webhook,
+// idempotency-key check, or explicit rule evaluation)"). Directly
+// named as a required mechanic by 006-gamification-rewards FR-014
+// ("System MUST require a source event ID, rule ID, user ID, and
+// idempotency key on every point-award request, and MUST enforce a
+// unique-transaction constraint").
+//
+// This table is the shared, schema-agnostic MECHANISM — it does not
+// know or care what "gamification.point-award" or
+// "payment.webhook.stripe" actually do; each owning feature is
+// responsible for choosing its own `scope` string and interpreting its
+// own `responseSnapshot` shape. No business logic lives here.
+// ============================================================================
+model IdempotencyKey {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Caller-supplied idempotency key (e.g. a UUID the client generates
+  /// once per logical operation and retries with unchanged).
+  key String @db.VarChar(191)
+
+  /// Namespaces `key` per feature/use-case so two unrelated features
+  /// can never collide on the same key value, e.g.
+  /// "gamification.point-award", "payment.webhook.stripe".
+  scope String @db.VarChar(191)
+
+  /// Optional hash of the request payload — lets a caller detect the
+  /// "same key, different request body" misuse case (a classic
+  /// idempotency bug class) rather than silently returning a stale
+  /// cached response for a materially different request.
+  requestHash String? @map("request_hash") @db.VarChar(64)
+
+  status IdempotencyStatus @default(PENDING)
+
+  /// Cached result to return on a retried request once `status` is
+  /// COMPLETED — shape is owned by the calling feature, not this table.
+  responseSnapshot Json? @map("response_snapshot")
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  /// Idempotency keys are not kept forever — see
+  /// docs/database/ARCHITECTURE.md §10 (Data Retention) for the
+  /// per-scope expiry policy each feature is expected to configure.
+  expiresAt DateTime? @map("expires_at") @db.Timestamptz(6)
+
+  @@unique([scope, key])
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}
+
+enum IdempotencyStatus {
+  PENDING
+  COMPLETED
+  FAILED
+
+  @@map("idempotency_status")
+}

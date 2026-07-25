@@ -53,4 +53,18 @@ describe('redact()', () => {
     redact(original);
     expect(original.password).toBe('secret');
   });
+
+  it('scrubs credentials out of a connection-string-shaped value, even under a non-sensitive key', () => {
+    const result = redact({
+      reason: 'connect ECONNREFUSED to postgresql://coachx:s3cr3t@localhost:5432/coachx_dev',
+    });
+    expect(result).toEqual({
+      reason: 'connect ECONNREFUSED to postgresql://[REDACTED]@localhost:5432/coachx_dev',
+    });
+  });
+
+  it('leaves an ordinary URL without embedded credentials unchanged', () => {
+    const result = redact({ message: 'fetched https://example.com/api/v1/health' });
+    expect(result).toEqual({ message: 'fetched https://example.com/api/v1/health' });
+  });
 });

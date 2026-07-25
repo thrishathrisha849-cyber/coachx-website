@@ -31,7 +31,24 @@ const MAX_DEPTH = 6;
 
 function isSensitiveKey(key: string): boolean {
   const normalized = key.toLowerCase().replace(/[-_\s]/g, '');
-  return SENSITIVE_KEY_PATTERNS.some((pattern) => normalized.includes(pattern.replace(/[-_]/g, '')));
+  return SENSITIVE_KEY_PATTERNS.some((pattern) =>
+    normalized.includes(pattern.replace(/[-_]/g, '')),
+  );
+}
+
+/**
+ * Matches a `scheme://user:password@host` credential segment inside an
+ * otherwise-unremarkable string (e.g. a Postgres connection URL that a
+ * driver error message embedded verbatim). Added for Phase 3: Prisma/pg
+ * connection errors do not consistently omit the connection string the
+ * way `checkDatabaseHealth()`'s own hand-written messages do, so this
+ * scrubs credentials out of ANY string value — not just ones reached
+ * via a sensitive-looking key — before it can reach a log line.
+ */
+const CONNECTION_STRING_CREDENTIALS_PATTERN = /(:\/\/)([^:/?#\s]+):([^@/?#\s]+)@/g;
+
+function scrubConnectionStringCredentials(value: string): string {
+  return value.replace(CONNECTION_STRING_CREDENTIALS_PATTERN, `$1${REDACTED_VALUE}@`);
 }
 
 /**
@@ -63,6 +80,10 @@ export function redact<T>(value: T, depth = 0): T {
       result[key] = isSensitiveKey(key) ? REDACTED_VALUE : redact(val, depth + 1);
     }
     return result as T;
+  }
+
+  if (typeof value === 'string') {
+    return scrubConnectionStringCredentials(value) as unknown as T;
   }
 
   return value;

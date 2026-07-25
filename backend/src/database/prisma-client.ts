@@ -3,30 +3,23 @@ import { logger } from '../utils/logger';
 import { config } from '../config';
 
 /**
- * Database connectivity foundation (Phase 2).
+ * Database connectivity foundation.
  *
- * IMPORTANT — documented, expected limitation (not a bug):
- * `database/prisma/schema.prisma` currently defines a datasource and
- * generator only, with zero models, by explicit Phase 1/Phase 2 design
- * ("do not create feature-specific models"). Prisma requires at least
- * one model to generate a real client — see `database/prisma/schema.prisma`
- * and `docs/SETUP_GUIDE.md` §3.4 for the full explanation. Until the
- * first feature adds its models, `@prisma/client`'s generated output is
- * an unusable stub whose constructor throws
- * `"@prisma/client did not initialize yet"` immediately when
- * instantiated — *importing* the module is safe (confirmed: the stub's
- * throw happens inside the `PrismaClient` constructor, not at module
- * load), which is what makes a statically-typed import here safe.
+ * UPDATE (Phase 3): `database/prisma/schema.prisma` now defines two
+ * justified shared technical models (`AuditEvent`, `IdempotencyKey` —
+ * see `docs/database/SCHEMA_OWNERSHIP.md`), so `@prisma/client` is a
+ * real, usable generated client, not the Phase 1/2 "zero models" stub.
+ * `connectDatabase()`'s lazy-construction and non-fatal-failure design
+ * is kept regardless — a database that is unreachable at boot (wrong
+ * credentials, Postgres not started yet, network blip) should still
+ * never crash the whole API process; `/api/v1/ready` is what reports
+ * the real state to callers/orchestrators.
  *
- * To keep the rest of the backend fully functional in this interim
- * state, this module:
- *   - never instantiates `PrismaClient` at module load time (only
- *     lazily, inside `connectDatabase()`);
- *   - treats any failure (including the stub error) as a handled,
- *     logged, non-fatal condition — the backend starts and serves
- *     traffic normally with the database reporting "not connected" on
- *     `/api/v1/ready` until this resolves itself the moment the first
- *     model is added and `prisma generate` succeeds.
+ * `docs/database/` (Phase 3) is the source of truth for how this client
+ * is expected to be used going forward: `getPrismaClient()` below is
+ * the single accessor every other database utility
+ * (`transaction.ts`, `audit-event.repository.ts`, `idempotency.service.ts`,
+ * etc.) reads from — none of them construct their own `PrismaClient`.
  */
 
 let client: PrismaClient | null = null;
@@ -120,6 +113,19 @@ export async function checkDatabaseHealth(): Promise<DatabaseHealth> {
 }
 
 /**
+ * The single accessor for the live Prisma client. Returns `null` if the
+ * database isn't configured or the connection hasn't been established —
+ * every caller (transaction wrapper, repositories) MUST handle the
+ * `null` case explicitly (typically via `AppError.internal()` or a
+ * feature-specific fallback) rather than assuming a client always
+ * exists, consistent with this module's "database is optional at
+ * startup" design.
+ */
+export function getPrismaClient(): PrismaClient | null {
+  return client;
+}
+
+/**
  * Test-only escape hatch: resets module-level state between test cases
  * that exercise different connection scenarios. Not used by application
  * code.
@@ -127,4 +133,14 @@ export async function checkDatabaseHealth(): Promise<DatabaseHealth> {
 export function __resetForTests(): void {
   client = null;
   lastConnectionError = null;
+}
+
+/**
+ * Test-only escape hatch: lets a test inject a client directly (e.g. a
+ * real client pointed at a disposable test schema, or a mock) without
+ * going through the full `connectDatabase()` network path. Not used by
+ * application code.
+ */
+export function __setClientForTests(testClient: PrismaClient | null): void {
+  client = testClient;
 }

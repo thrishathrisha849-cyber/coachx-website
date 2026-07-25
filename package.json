@@ -22,9 +22,9 @@
     "build:backend": "npm run build --workspace=backend",
     "build:frontend": "npm run build --workspace=frontend",
     "build:admin": "npm run build --workspace=admin",
-    "build": "npm run build:shared && npm run build:backend && npm run build:frontend && npm run build:admin",
+    "build": "npm run build:shared && npm run db:generate && npm run build:backend && npm run build:frontend && npm run build:admin",
     "lint": "npm run lint --workspace=backend && npm run lint --workspace=frontend && npm run lint --workspace=admin",
-    "test": "npm run test --workspace=backend",
+    "test": "npm run db:generate && npm run test --workspace=backend",
     "test:watch": "npm run test:watch --workspace=backend",
     "test:coverage": "npm run test:coverage --workspace=backend",
     "db:generate": "npm run generate --workspace=database",
@@ -33,7 +33,7 @@
     "db:studio": "npm run studio --workspace=database",
     "db:seed": "npm run seed --workspace=database",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\" --ignore-path .gitignore",
-    "typecheck": "npm run build:shared && npm run typecheck --workspace=backend && npm run typecheck --workspace=frontend && npm run typecheck --workspace=admin",
+    "typecheck": "npm run build:shared && npm run db:generate && npm run typecheck --workspace=backend && npm run typecheck --workspace=frontend && npm run typecheck --workspace=admin",
     "dev": "concurrently -n backend,frontend,admin -c blue,green,magenta \"npm:dev:backend\" \"npm:dev:frontend\" \"npm:dev:admin\""
   },
   "devDependencies": {

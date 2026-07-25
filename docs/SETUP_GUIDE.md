@@ -1,21 +1,24 @@
 # CoachX — Project Setup Guide
 
 This guide gets a fresh clone of the CoachX Enterprise Platform running
-locally. It covers **Phase 1 (Project Foundation)** and **Phase 2 (Core
-Infrastructure)** — there are no business features to configure yet,
-only the infrastructure (config, logging, error handling, health/
-readiness, database connectivity foundation, security middleware) that
-later features build on.
+locally. It covers **Phase 1 (Project Foundation)**, **Phase 2 (Core
+Infrastructure)**, and **Phase 3 (Database & Shared Data Architecture)**
+— there are no business features to configure yet, only the
+infrastructure (config, logging, error handling, health/readiness,
+database foundation — shared technical models, transactions,
+idempotency, audit trail — security middleware) that later features
+build on. See `docs/database/` for everything specific to the database
+layer; this guide covers getting the whole stack running end-to-end.
 
 ## 1. Prerequisites
 
-| Tool       | Minimum version | Check with           |
-| ---------- | ---------------- | --------------------- |
-| Node.js    | 20.x              | `node --version`      |
-| npm        | 10.x              | `npm --version`       |
-| Docker     | 24.x (optional but recommended) | `docker --version` |
-| Flutter SDK| 3.22.x            | `flutter --version`   |
-| Git        | any recent        | `git --version`       |
+| Tool        | Minimum version                 | Check with          |
+| ----------- | ------------------------------- | ------------------- |
+| Node.js     | 20.x                            | `node --version`    |
+| npm         | 10.x                            | `npm --version`     |
+| Docker      | 24.x (optional but recommended) | `docker --version`  |
+| Flutter SDK | 3.22.x                          | `flutter --version` |
+| Git         | any recent                      | `git --version`     |
 
 ## 2. One-command setup
 
@@ -62,18 +65,18 @@ an identical, isolated test environment without extra setup steps.
 
 #### Backend environment variable reference
 
-| Variable | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `NODE_ENV` | No | `development` | One of `development`, `test`, `staging`, `production`. Controls log format (dev = colorized text, prod = JSON) and which `.env*` file loads. |
-| `PORT` | No | `4000` | Must be a positive integer. |
-| `HOST` | No | `0.0.0.0` | Bind address. |
-| `API_PREFIX` | No | `/api` | All versioned routes mount under `<API_PREFIX>/v1/...`. |
-| `CORS_ORIGINS` | No | `http://localhost:5173` | Comma-separated allowlist — origins not in this list are rejected by the CORS middleware. |
-| `LOG_LEVEL` | No | `info` | One of `error`, `warn`, `info`, `http`, `debug`. |
-| `DATABASE_URL` | No (yet) | *(unset)* | Optional in Phase 1/2 because there are no models to query yet — see §3.4. When set, `/api/v1/ready` reports real connection status. |
-| `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` | No | dev-only placeholders | **Not used by any code yet** — reserved for the Authentication phase. The placeholder values are intentionally obviously-fake so nobody mistakes them for real secrets. |
-| `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | No | *(unset)* | Reserved for the Storage feature — not consumed by any code yet. |
-| `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX_REQUESTS` | No | `60000` / `120` | Applies to the whole `<API_PREFIX>` surface. |
+| Variable                                           | Required | Default                 | Notes                                                                                                                                                                                                                                                                                                                                                              |
+| -------------------------------------------------- | -------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `NODE_ENV`                                         | No       | `development`           | One of `development`, `test`, `staging`, `production`. Controls log format (dev = colorized text, prod = JSON) and which `.env*` file loads.                                                                                                                                                                                                                       |
+| `PORT`                                             | No       | `4000`                  | Must be a positive integer.                                                                                                                                                                                                                                                                                                                                        |
+| `HOST`                                             | No       | `0.0.0.0`               | Bind address.                                                                                                                                                                                                                                                                                                                                                      |
+| `API_PREFIX`                                       | No       | `/api`                  | All versioned routes mount under `<API_PREFIX>/v1/...`.                                                                                                                                                                                                                                                                                                            |
+| `CORS_ORIGINS`                                     | No       | `http://localhost:5173` | Comma-separated allowlist — origins not in this list are rejected by the CORS middleware.                                                                                                                                                                                                                                                                          |
+| `LOG_LEVEL`                                        | No       | `info`                  | One of `error`, `warn`, `info`, `http`, `debug`.                                                                                                                                                                                                                                                                                                                   |
+| `DATABASE_URL`                                     | No       | _(unset)_               | Optional — the backend runs fine with it unset (`/api/v1/ready` reports the database check as `skip`). Set it to point at a real Postgres 16 instance (see §3.3) to exercise the Phase 3 database foundation (`AuditEvent`/`IdempotencyKey`, transactions) locally; when set, `/api/v1/ready` reports real connection status. See `docs/database/ARCHITECTURE.md`. |
+| `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET`         | No       | dev-only placeholders   | **Not used by any code yet** — reserved for the Authentication phase. The placeholder values are intentionally obviously-fake so nobody mistakes them for real secrets.                                                                                                                                                                                            |
+| `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`       | No       | _(unset)_               | Reserved for the Storage feature — not consumed by any code yet.                                                                                                                                                                                                                                                                                                   |
+| `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX_REQUESTS` | No       | `60000` / `120`         | Applies to the whole `<API_PREFIX>` surface.                                                                                                                                                                                                                                                                                                                       |
 
 **Never exposed to the frontend/admin apps**: nothing in this table is
 prefixed `VITE_`, so none of it is ever bundled into client-side
@@ -83,7 +86,7 @@ ever contain a public API base URL and app name).
 
 **Missing/invalid variables fail fast**: `backend/src/config/env.config.ts`
 validates `process.env` against a Zod schema at startup. An invalid or
-missing *required* field prints exactly which field(s) failed and exits
+missing _required_ field prints exactly which field(s) failed and exits
 immediately (`process.exit(1)`) — the server never starts in a
 partially-configured state. Every field above currently has a safe
 default, so an empty `.env` is enough to boot in development; this will
@@ -101,43 +104,35 @@ docker compose -f infrastructure/docker-compose.dev.yml up -d
 Or point `DATABASE_URL` in `backend/.env` and `database/.env` at any
 Postgres 16 instance you already have running.
 
-### 3.4 Prisma — expected no-model state (still true in Phase 2)
+### 3.4 Prisma — shared technical models (as of Phase 3)
 
-`database/prisma/schema.prisma` currently defines only the
-datasource/generator — no models — because neither Phase 1 nor Phase 2
-create feature-specific tables. This has direct, expected consequences,
-confirmed by actually running each command against the current schema
-(not assumed):
+`database/prisma/schema.prisma` now defines two shared, platform-wide
+**technical** models — `AuditEvent` and `IdempotencyKey` — the only
+models justified before any business feature exists. See
+`docs/database/SCHEMA_OWNERSHIP.md` for the full justification and for
+what was deliberately **not** added yet (Tenant/Organization, a
+transactional Outbox). Every other future business table (courses,
+users, payments, etc.) belongs to its own feature, not this shared
+schema.
 
-- `npx prisma validate` and `npx prisma format` **work today** (no DB
-  connection needed) and confirm the schema file itself is well-formed.
-- `npm run db:generate` (`prisma generate`) **fails** with
-  `"You don't have any models defined in your schema.prisma, so nothing
-  will be generated"` until the first model is added — Prisma requires
-  at least one model to generate a client. This is not a bug in the
-  scaffold; it is the correct, honest state of a schema with zero tables.
-  `scripts/setup.sh` treats this as a non-fatal, expected step and
-  continues rather than aborting.
-- Because `prisma generate` cannot succeed yet, `@prisma/client`'s
-  installed package is an unusable stub — its `PrismaClient` constructor
-  throws `"@prisma/client did not initialize yet"` **immediately when
-  instantiated** (confirmed by direct testing; the throw happens in the
-  constructor, not at import time). Phase 2's database connectivity
-  layer (`backend/src/database/prisma-client.ts`) is written specifically
-  around this fact: it never constructs `PrismaClient` at module load
-  time, only lazily inside `connectDatabase()`, and treats the failure
-  as a handled, logged, non-fatal condition — the backend still starts
-  and serves `/api/v1/health` normally; only `/api/v1/ready` reflects
-  the database as unavailable (see §4a below).
-- `database/seeds/index.ts` will throw the same error if run before
-  `generate` has succeeded at least once. Do not attempt to "fix" this
-  by seeding fake data into a placeholder table — it resolves naturally
-  the moment the first feature (per its own `spec.md`) adds its models.
-- `prisma migrate dev` requires both a reachable Postgres instance and
-  at least one model — also not applicable yet.
-
-This is a deliberate, reported limitation, not an oversight — see the
-Known Limitations section (§7) for the full status.
+- `npm run db:generate` (`prisma generate`) now works and is required
+  before typecheck/test/build — the root `typecheck`/`test`/`build`
+  scripts and CI all run it automatically before anything that imports
+  `@prisma/client`. Run it manually after pulling schema changes:
+  `npm run db:generate`.
+- `npm run db:migrate` (`prisma migrate dev`) applies the Phase 3
+  migration (`20260725084057_init_audit_and_idempotency`) against a
+  reachable Postgres instance (§3.3) — this is the first real migration
+  in the repo.
+- `database/seeds/index.ts` is still a no-op runner (no seed data
+  defined for either shared model) but now includes a production-safety
+  guard — see `docs/database/SEEDING.md`.
+- **A note on reliability**: `@prisma/client`'s own `postinstall` hook
+  is not depended upon for a working client in this monorepo — it was
+  found during Phase 3 validation to not reliably regenerate the client
+  in an npm-workspaces layout. `npm run db:generate` is always run
+  explicitly (in CI and in the root `typecheck`/`test`/`build` scripts)
+  rather than assumed.
 
 ### 3.5 Run the apps
 
@@ -169,20 +164,20 @@ flutter run --dart-define-from-file=env/dev.json
 
 ### 4a. Health vs. readiness — what each endpoint actually means
 
-| | `GET /api/v1/health` | `GET /api/v1/ready` |
-| --- | --- | --- |
-| Answers | "Is the process alive?" (liveness) | "Can this instance safely receive traffic right now?" (readiness) |
-| Checks dependencies | No — never touches the database | Yes — currently: database, when `DATABASE_URL` is configured |
-| Status codes | Always `200` if the process is running | `200` if every *configured* dependency is healthy; `503` if any configured dependency has failed |
-| Typical use | Container/process liveness probe | Load balancer / Kubernetes readiness probe — routes traffic away from an instance that returns 503 |
-| Example (DB not configured) | `{"success":true,"data":{"status":"ok",...}}` | `{"success":true,"data":{"status":"ready","checks":[{"name":"database","status":"skip","message":"DATABASE_URL not configured"}]}}` |
-| Example (DB configured but unreachable) | Unaffected — still `200` | `503` — `{"success":false,"error":{"code":"NOT_READY",...,"details":{"checks":[{"name":"database","status":"fail","message":"..."}]}}}}` |
+|                                         | `GET /api/v1/health`                          | `GET /api/v1/ready`                                                                                                                      |
+| --------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Answers                                 | "Is the process alive?" (liveness)            | "Can this instance safely receive traffic right now?" (readiness)                                                                        |
+| Checks dependencies                     | No — never touches the database               | Yes — currently: database, when `DATABASE_URL` is configured                                                                             |
+| Status codes                            | Always `200` if the process is running        | `200` if every _configured_ dependency is healthy; `503` if any configured dependency has failed                                         |
+| Typical use                             | Container/process liveness probe              | Load balancer / Kubernetes readiness probe — routes traffic away from an instance that returns 503                                       |
+| Example (DB not configured)             | `{"success":true,"data":{"status":"ok",...}}` | `{"success":true,"data":{"status":"ready","checks":[{"name":"database","status":"skip","message":"DATABASE_URL not configured"}]}}`      |
+| Example (DB configured but unreachable) | Unaffected — still `200`                      | `503` — `{"success":false,"error":{"code":"NOT_READY",...,"details":{"checks":[{"name":"database","status":"fail","message":"..."}]}}}}` |
 
 A `skip` status is **not** a failure — it means that dependency isn't
-configured in this environment, which is expected and correct for
-Phase 1/2 (no `DATABASE_URL` needed yet since there are no models to
-query). Neither endpoint ever includes a connection string, credential,
-or stack trace in its response body — verified by dedicated tests (see
+configured in this environment (no `DATABASE_URL` set), which is
+expected and correct any time you're not exercising the database layer.
+Neither endpoint ever includes a connection string, credential, or
+stack trace in its response body — verified by dedicated tests (see
 `backend/tests/contract/{health,readiness}.contract.test.ts`).
 
 ## 5. Running the full Docker stack
@@ -202,22 +197,34 @@ Dockerfile's `HEALTHCHECK` instruction), and `backend` waits for
 
 ## 6. Troubleshooting
 
-| Symptom | Likely cause |
-| --- | --- |
-| `npm install` fails resolving `@coachx/shared` | Run `npm install` from the **repository root**, not from inside `backend/`/`frontend/`/`admin/`. |
-| `npm run typecheck` fails with "Cannot find module '@coachx/shared'" | `shared/dist/` doesn't exist yet — run `npm run build:shared` first (the root `typecheck` script now does this automatically; only relevant if you're calling `tsc --noEmit` directly inside a package). |
-| Backend fails to start with an env validation error | A required variable is missing/malformed in `backend/.env` — the startup log lists exactly which field. |
-| Frontend shows "Backend unreachable" | Confirm the backend is running and `VITE_API_BASE_URL` in `frontend/.env` points at it. |
-| `prisma validate` fails with "environment variable not found" | Copy `database/.env.example` to `database/.env` first. |
-| `/api/v1/ready` returns 503 in local dev | Expected if `DATABASE_URL` is set in `backend/.env` but no Postgres is running — either start Postgres (§3.3) or remove `DATABASE_URL` from `.env` to get a `skip` instead of a `fail`. |
-| `flutter run` can't reach the backend from an Android emulator | Use `10.0.2.2` instead of `localhost` in `API_BASE_URL` — the emulator's alias for the host machine (already the default in `env/dev.json.example`). |
+| Symptom                                                                                                    | Likely cause                                                                                                                                                                                             |
+| ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm install` fails resolving `@coachx/shared`                                                             | Run `npm install` from the **repository root**, not from inside `backend/`/`frontend/`/`admin/`.                                                                                                         |
+| `npm run typecheck` fails with "Cannot find module '@coachx/shared'"                                       | `shared/dist/` doesn't exist yet — run `npm run build:shared` first (the root `typecheck` script now does this automatically; only relevant if you're calling `tsc --noEmit` directly inside a package). |
+| Backend fails to start with an env validation error                                                        | A required variable is missing/malformed in `backend/.env` — the startup log lists exactly which field.                                                                                                  |
+| Frontend shows "Backend unreachable"                                                                       | Confirm the backend is running and `VITE_API_BASE_URL` in `frontend/.env` points at it.                                                                                                                  |
+| `prisma validate` fails with "environment variable not found"                                              | Copy `database/.env.example` to `database/.env` first.                                                                                                                                                   |
+| `npm run typecheck`/`test`/`build` fails with "Cannot find module '@prisma/client'" or missing model types | Run `npm run db:generate` — the root scripts do this automatically, but if you're invoking `tsc`/`jest` directly inside `backend/`, generate first.                                                      |
+| `/api/v1/ready` returns 503 in local dev                                                                   | Expected if `DATABASE_URL` is set in `backend/.env` but no Postgres is running — either start Postgres (§3.3) or remove `DATABASE_URL` from `.env` to get a `skip` instead of a `fail`.                  |
+| `flutter run` can't reach the backend from an Android emulator                                             | Use `10.0.2.2` instead of `localhost` in `API_BASE_URL` — the emulator's alias for the host machine (already the default in `env/dev.json.example`).                                                     |
 
-## 7. Known limitations (accurate as of Phase 2)
+## 7. Known limitations (accurate as of Phase 3)
 
-- **No database models exist yet** (§3.4) — `prisma generate`,
-  `prisma migrate dev`, and `database/seeds/index.ts` are all
-  non-functional until the first feature adds models. This is an
-  intentional, documented scope boundary, not a defect.
+- **Only two shared, technical database models exist** (§3.4,
+  `docs/database/SCHEMA_OWNERSHIP.md`) — `AuditEvent` and
+  `IdempotencyKey`. No business-domain tables exist yet; those belong to
+  their own future features. `database/seeds/index.ts` remains a no-op
+  runner (no seed data defined for either shared model yet).
+- **`backend/tests/integration/database.integration.test.ts` requires a
+  real, reachable Postgres instance** (via `TEST_DATABASE_URL`) to run
+  its assertions; without one it self-reports every test as SKIPPED
+  (with a console warning) rather than silently passing. Neither Docker
+  nor a local Postgres was available in the environment this phase was
+  built in — see `docs/database/TESTING.md` for exact reproduction
+  steps once Postgres is available.
+- **Multi-tenancy is an explicit decision gate, not yet implemented** —
+  see `docs/database/MULTI_TENANCY.md` and
+  `docs/database/DECISION_GATES.md`.
 - **JWT/Supabase/RBAC config fields are unused placeholders.** They
   validate correctly and have safe dev defaults, but no code reads them
   yet — Authentication is a later phase.
@@ -241,7 +248,10 @@ Dockerfile's `HEALTHCHECK` instruction), and `backend` waits for
   silently into infrastructure work. Run `npm audit` at any time to see
   the current, authoritative list — this section will go stale if not
   re-verified against a fresh audit before relying on it.
+
 - **CI does not yet run against a real Postgres service container.**
-  `prisma validate` (schema-only, no live connection needed) runs in CI;
-  a real Postgres-backed integration test is meaningful once the first
-  model exists.
+  `prisma validate` and `prisma generate` (both schema-only, no live
+  connection needed) run in CI; `database.integration.test.ts` (§ above)
+  self-skips in CI today for the same reason it self-skips locally. Wiring
+  a Postgres service container into CI is a reasonable next step, tracked
+  in `docs/database/DECISION_GATES.md` rather than done silently here.

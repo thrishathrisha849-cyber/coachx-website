@@ -192,6 +192,24 @@ CI, and by making the root `npm run typecheck` script build `shared`
 first too, so the same class of failure can't happen for a local
 developer either.
 
+### A real Prisma-client generation gap found during Phase 3 validation
+
+Once `database/prisma/schema.prisma` gained real models (Phase 3), CI's
+only Prisma step was `prisma validate` (schema-only). This was found to
+be insufficient by direct testing, not assumption: manually clearing the
+generated `@prisma/client` output and reinstalling the bare package
+(`npm rebuild @prisma/client`) left the client in a broken,
+non-regenerated state — `@prisma/client`'s own `postinstall` hook did
+not reliably rebuild it in this npm-workspaces monorepo layout. Every
+backend module that imports `PrismaClient`/`Prisma.*` types would fail
+to even resolve the module, let alone typecheck, in that state. Fixed
+by adding an explicit "Generate Prisma Client" step to CI (right after
+"Validate Prisma schema") and by chaining `db:generate` into the root
+`typecheck`/`test`/`build` scripts — the same defensive pattern already
+used for `build:shared` in the Phase 2 fix above, applied here for the
+same underlying reason: never assume a generated artifact exists just
+because `npm ci` ran.
+
 ## Environment parity
 
 `development` → `test` → `staging` → `production` are the only valid
