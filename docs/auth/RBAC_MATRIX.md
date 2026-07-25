@@ -40,6 +40,7 @@ only permissions with a direct spec citation exist:
 | `user.role.assign` | 003 FR-130 (role-change workflow needs its own permission) |
 | `ticket.manage` | 001 US3 acceptance scenario 3 |
 | `organization.manage_own` | 001 FR-086 |
+| `content.manage` | 002 FR-084 (Phase 5 Part 1 — CMS page/navigation/announcement management) |
 
 Every future feature adds its own `resource.action` permissions as it
 is built, following this same naming convention — this catalog is not
@@ -56,9 +57,9 @@ meant to be exhaustive ahead of time.
 | `mentor` | `course.view` |
 | `community_moderator` | `course.view`, `community.moderate` |
 | `support_agent` | `course.view`, `ticket.manage` |
-| `content_manager` | `course.view`, `course.create`, `course.publish` |
+| `content_manager` | `course.view`, `course.create`, `course.publish`, `content.manage` |
 | `finance_admin` | `course.view`, `payment.refund` |
-| `platform_admin` | `course.view`, `course.create`, `course.publish`, `community.moderate`, `payment.refund`, `user.suspend`, `user.role.assign`, `ticket.manage` |
+| `platform_admin` | `course.view`, `course.create`, `course.publish`, `community.moderate`, `payment.refund`, `user.suspend`, `user.role.assign`, `ticket.manage`, `content.manage` |
 | `super_admin` | *(all baseline permissions — 001 FR-086: "full platform access")* |
 | `organization_admin` | `course.view`, `organization.manage_own` |
 

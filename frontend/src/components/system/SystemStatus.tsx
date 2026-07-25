@@ -1,19 +1,21 @@
 import { useHealthCheck } from '@/hooks/useHealthCheck';
+import { useDocumentHead } from '@/hooks/useDocumentHead';
 
 /**
- * Foundation-only bootstrap screen. Confirms the frontend build, routing,
- * theming, and API client are wired correctly by pinging the backend
- * health endpoint. This is NOT a business feature page — it is replaced
- * (or moved behind an internal diagnostics route) once real pages exist.
+ * The public "Status" page (002's page list). Originally a Phase 1
+ * bootstrap/diagnostics screen confirming the frontend↔backend wiring
+ * — reused here as-is rather than building a second status page from
+ * scratch, per this phase's "reuse existing architecture" instruction.
  */
 export function SystemStatus() {
   const { data, isLoading, error } = useHealthCheck();
+  useDocumentHead({ title: 'System Status | CoachX', noIndex: true });
 
   return (
     <div className="flex flex-col items-center gap-4 rounded-lg border border-slate-200 p-8 text-center dark:border-slate-800">
-      <h1 className="text-2xl font-bold">CoachX Frontend Foundation</h1>
+      <h1 className="text-2xl font-bold">System Status</h1>
       <p className="text-slate-500 dark:text-slate-400">
-        Phase 1 project scaffold — no business pages yet.
+        Live backend connectivity check.
       </p>
 
       <div className="mt-4 w-full max-w-sm rounded-md bg-slate-50 p-4 text-left text-sm dark:bg-slate-900">

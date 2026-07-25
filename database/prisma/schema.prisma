@@ -564,3 +564,419 @@ model LoginAttempt {
   @@index([emailAttempted, createdAt])
   @@map("login_attempts")
 }
+
+// ============================================================================
+// Phase 5 (Part 1) — Public Website & CMS Foundation
+//
+// Owner: 002-public-website-marketing-funnel (Page/Block/Navigation/
+// Announcement/SEO — FR-001–FR-010, FR-084–FR-092). Scope note: this is
+// Part 1 only — the funnel/lead-capture/checkout-tracking/experiment
+// entities 002 also owns (Lead, Campaign, Checkout Session, Experiment)
+// are deliberately NOT modeled here; see docs/public-site/TRACEABILITY.md
+// for the exact scope boundary and docs/public-site/DECISION_GATES.md
+// for why each is deferred rather than built now.
+//
+// `Page` here is distinct from Phase 4's `User`/RBAC models and from
+// 001's future `Content Item` (content-governance) entity — 001's
+// content-governance module is not implemented in this codebase yet
+// (001 has never been code-implemented, only spec-corrected — see
+// docs/auth/TRACEABILITY.md §"Architecture conflict" for the identical
+// finding already made for 001/003). `Page` does not duplicate anything
+// that currently exists in code.
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// Page — a CMS-managed public URL (002 FR-086, Key Entity "Page").
+// ----------------------------------------------------------------------------
+model Page {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// URL-safe identifier. Unique per (slug, language) — the same slug may
+  /// exist in multiple languages (002 FR-075/FR-076).
+  slug     String       @db.VarChar(191)
+  language PageLanguage @default(EN)
+
+  template PageTemplate @default(STANDARD)
+  status   PageStatus   @default(DRAFT)
+
+  title String @db.VarChar(255)
+
+  // --- SEO fields embedded directly on Page (FR-090), rather than a
+  // separate joined SeoMetadata table — every Page always has exactly
+  // one SEO configuration, so a 1:1 join table would add a lookup with
+  // no modeling benefit. See docs/public-site/CMS_MODEL.md §2. ---
+  seoTitle       String? @map("seo_title") @db.VarChar(255)
+  seoDescription String? @map("seo_description") @db.VarChar(500)
+  canonicalUrl   String? @map("canonical_url") @db.VarChar(500)
+  ogImageUrl     String? @map("og_image_url") @db.VarChar(500)
+  noIndex        Boolean @default(false) @map("no_index")
+
+  /// Simple scalar tag list (Postgres native array) — used by blog-
+  /// template pages for category/tag taxonomy (FR-049). Deliberately not
+  /// a separate Tag/PageTag join-table model: tags here are lightweight,
+  /// page-owned labels, not a shared cross-entity taxonomy (which would
+  /// only be justified once Courses/Events/Resources also need to share
+  /// the same tag vocabulary — none of which exist yet).
+  tags String[]
+
+  /// Role names (matching Phase 4's `Role.name`) required to see this
+  /// page; empty = visible to everyone. Structurally ready for FR-072's
+  /// audience targeting; not yet consulted by any enforcement path since
+  /// no frontend auth session exists yet (see
+  /// docs/public-site/TRACEABILITY.md FR-007).
+  audienceRoles String[] @map("audience_roles")
+
+  headerVisible Boolean @default(true) @map("header_visible")
+  footerVisible Boolean @default(true) @map("footer_visible")
+
+  publishAt DateTime? @map("publish_at") @db.Timestamptz(6)
+  expireAt  DateTime? @map("expire_at") @db.Timestamptz(6)
+
+  /// FR-105: admin preview links expire — a short-lived token that lets
+  /// a non-published page render via `?preview=<token>`.
+  previewToken     String?   @unique @map("preview_token") @db.VarChar(64)
+  previewExpiresAt DateTime? @map("preview_expires_at") @db.Timestamptz(6)
+
+  createdBy String? @map("created_by") @db.Uuid
+  updatedBy String? @map("updated_by") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  blocks   PageBlock[]
+  versions PageVersion[]
+
+  @@unique([slug, language])
+  @@index([status, publishAt])
+  @@index([template])
+  @@map("pages")
+}
+
+enum PageLanguage {
+  EN
+  TA
+  TANGLISH
+
+  @@map("page_language")
+}
+
+/// FR-087: Draft → Review → Approved → Scheduled → Published → Archived.
+enum PageStatus {
+  DRAFT
+  REVIEW
+  APPROVED
+  SCHEDULED
+  PUBLISHED
+  ARCHIVED
+
+  @@map("page_status")
+}
+
+/// A small, named set of page "shapes" this part's renderer understands —
+/// not a full template engine. HOME/BLOG_POST get dedicated route
+/// handling (docs/public-site/TRACEABILITY.md); STANDARD covers every
+/// other CMS-driven marketing page (About, Pricing, FAQ, Privacy, Terms,
+/// Cookies, Careers, Press, Status, Roadmap, Release Notes).
+enum PageTemplate {
+  STANDARD
+  HOME
+  BLOG_POST
+
+  @@map("page_template")
+}
+
+// ----------------------------------------------------------------------------
+// PageBlock — an ordered content-block instance within a Page (FR-085,
+// Key Entity "Page Section / Content Block").
+// ----------------------------------------------------------------------------
+model PageBlock {
+  id     String @id @default(uuid()) @db.Uuid
+  pageId String @map("page_id") @db.Uuid
+  page   Page   @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  type    PageBlockType
+  order   Int
+  visible Boolean       @default(true)
+
+  /// Block-shape-specific content. Validated at the application layer
+  /// per block type (see backend/src/cms/block-schemas.ts) rather than
+  /// via a rigid per-type column set — the 20 block types in FR-085 have
+  /// genuinely different field shapes, and a JSON column with an
+  /// app-layer Zod schema per type avoids either 20 near-empty tables or
+  /// one enormous nullable-everything table.
+  data Json
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([pageId, order])
+  @@map("page_blocks")
+}
+
+/// FR-085's block-type list plus two Phase 5 Part 2 additions (GALLERY,
+/// DOWNLOAD) explicitly requested beyond the spec's own list — kept
+/// distinct from CUSTOM_HTML rather than folded into it, since each has
+/// its own validated, non-arbitrary-HTML data shape. PROGRAMS/COURSES/
+/// EVENTS/MENTORS/CUSTOM_HTML are modeled (so a future page can
+/// reference them) but render an explicit placeholder today — see
+/// docs/public-site/DECISION_GATES.md.
+enum PageBlockType {
+  HERO
+  TEXT
+  IMAGE
+  GALLERY
+  VIDEO
+  CTA
+  FEATURES
+  STATS
+  TESTIMONIALS
+  PRICING
+  FAQ
+  TIMELINE
+  TEAM
+  LOGO_STRIP
+  PROGRAMS
+  COURSES
+  EVENTS
+  MENTORS
+  FORM
+  DOWNLOAD
+  CUSTOM_HTML
+  SPACER
+  DIVIDER
+
+  @@map("page_block_type")
+}
+
+// ----------------------------------------------------------------------------
+// PageVersion — non-destructive version history (FR-088). A full JSON
+// snapshot of the page's settings + blocks is written on every publish-
+// affecting update, never overwritten — mirrors the non-destructive
+// principle Constitution Article IV already establishes platform-wide
+// (and the exact pattern 001/plan.md describes for its own Content
+// Version service, applied here to Page directly since 001's module
+// isn't implemented in code yet — see this file's header note).
+// ----------------------------------------------------------------------------
+model PageVersion {
+  id     String @id @default(uuid()) @db.Uuid
+  pageId String @map("page_id") @db.Uuid
+  page   Page   @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  versionNumber Int  @map("version_number")
+  snapshot      Json
+
+  editedBy String? @map("edited_by") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([pageId, versionNumber])
+  @@map("page_versions")
+}
+
+// ----------------------------------------------------------------------------
+// NavigationItem — header/footer/mobile menu tree (FR-001–FR-003, FR-008,
+// Key Entity "Navigation"). Self-referencing for mega-menu/dropdown
+// sub-items (FR-002) — never hardcoded in frontend code, per the brief's
+// explicit "Do not hardcode menu items."
+// ----------------------------------------------------------------------------
+model NavigationItem {
+  id String @id @default(uuid()) @db.Uuid
+
+  location NavLocation
+
+  parentId String?          @map("parent_id") @db.Uuid
+  parent   NavigationItem?  @relation("NavigationItemChildren", fields: [parentId], references: [id], onDelete: Cascade)
+  children NavigationItem[] @relation("NavigationItemChildren")
+
+  label      String  @db.VarChar(100)
+  url        String  @db.VarChar(500)
+  isExternal Boolean @default(false) @map("is_external")
+
+  /// Structurally ready for FR-007's permission-aware nav items; not yet
+  /// consulted (no frontend auth session — see Page.audienceRoles' note).
+  requiredPermission String? @map("required_permission") @db.VarChar(100)
+
+  /// Groups top-level dropdown children into mega-menu columns (FR-002).
+  megaMenuColumn String? @map("mega_menu_column") @db.VarChar(100)
+
+  order   Int
+  visible Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([location, parentId, order])
+  @@map("navigation_items")
+}
+
+enum NavLocation {
+  HEADER
+  FOOTER
+  MOBILE
+
+  @@map("nav_location")
+}
+
+// ----------------------------------------------------------------------------
+// Announcement — time-boxed, prioritized, dismissible site-wide banner
+// (FR-005, FR-006, Key Entity "Announcement").
+// ----------------------------------------------------------------------------
+model Announcement {
+  id String @id @default(uuid()) @db.Uuid
+
+  text        String  @db.VarChar(500)
+  icon        String? @db.VarChar(50)
+  ctaLabel    String? @map("cta_label") @db.VarChar(100)
+  ctaUrl      String? @map("cta_url") @db.VarChar(500)
+  style       String  @default("info") @db.VarChar(20)
+  dismissible Boolean @default(true)
+  priority    Int     @default(0)
+
+  audienceRoles String[] @map("audience_roles")
+
+  startDate DateTime @map("start_date") @db.Timestamptz(6)
+  endDate   DateTime @map("end_date") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([startDate, endDate, priority])
+  @@map("announcements")
+}
+
+// ----------------------------------------------------------------------------
+// Redirect — URL-to-URL mapping for SEO/broken-link management (FR-092,
+// Key Entity "Redirect").
+// ----------------------------------------------------------------------------
+model Redirect {
+  id String @id @default(uuid()) @db.Uuid
+
+  fromPath   String @unique @map("from_path") @db.VarChar(500)
+  toPath     String @map("to_path") @db.VarChar(500)
+  statusCode Int    @default(301) @map("status_code")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("redirects")
+}
+
+// ----------------------------------------------------------------------------
+// FaqEntry — categorized, searchable FAQ (002 FR-028, FR-091's FAQ
+// structured-data type, Key Entity "FAQ").
+// ----------------------------------------------------------------------------
+model FaqEntry {
+  id String @id @default(uuid()) @db.Uuid
+
+  category String @db.VarChar(100)
+  question String @db.VarChar(500)
+  answer   String
+
+  order   Int     @default(0)
+  visible Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([category, order])
+  @@map("faq_entries")
+}
+
+// ----------------------------------------------------------------------------
+// ConsentRecord — per-channel, versioned consent (FR-101, FR-102,
+// Constitution Article VI). Generic across every consent-capturing
+// surface this part builds (Contact form, Newsletter signup, cookie
+// banner) — never a single combined opt-in flag, per the constitution's
+// explicit requirement.
+// ----------------------------------------------------------------------------
+model ConsentRecord {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Nullable — a consent record may belong to an authenticated User
+  /// (Phase 4) or to an anonymous lead identified only by email (this
+  /// part has no Lead entity — see docs/public-site/DECISION_GATES.md;
+  /// email is the identifying key for pre-account consent).
+  userId String? @map("user_id") @db.Uuid
+  email  String? @db.VarChar(255)
+
+  channel       ConsentChannel
+  policyVersion String         @map("policy_version") @db.VarChar(20)
+  source        String         @db.VarChar(100)
+  ipAddress     String?        @map("ip_address") @db.VarChar(45)
+
+  grantedAt   DateTime  @default(now()) @map("granted_at") @db.Timestamptz(6)
+  withdrawnAt DateTime? @map("withdrawn_at") @db.Timestamptz(6)
+
+  @@index([userId, channel])
+  @@index([email, channel])
+  @@map("consent_records")
+}
+
+enum ConsentChannel {
+  TERMS
+  PRIVACY
+  MARKETING_EMAIL
+  WHATSAPP
+  SMS
+  PARTNER_COMMUNICATION
+  PERSONALIZATION_COOKIES
+
+  @@map("consent_channel")
+}
+
+// ----------------------------------------------------------------------------
+// ContactSubmission — Contact page form (FR-053). Deliberately minimal —
+// NOT a full CRM ticket (owner/SLA/queue) since 013-CRM is not built;
+// see docs/public-site/DECISION_GATES.md for the migration path once it is.
+// ----------------------------------------------------------------------------
+model ContactSubmission {
+  id String @id @default(uuid()) @db.Uuid
+
+  name       String            @db.VarChar(120)
+  email      String            @db.VarChar(255)
+  phone      String?           @db.VarChar(30)
+  department ContactDepartment
+  message    String
+
+  ipAddress String? @map("ip_address") @db.VarChar(45)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([createdAt])
+  @@map("contact_submissions")
+}
+
+enum ContactDepartment {
+  GENERAL_ENQUIRY
+  MEMBERSHIP
+  COURSE
+  PAYMENT
+  PARTNERSHIP
+  CORPORATE_TRAINING
+  MEDIA
+  TECHNICAL_SUPPORT
+
+  @@map("contact_department")
+}
+
+// ----------------------------------------------------------------------------
+// NewsletterSubscriber — footer/blog newsletter capture (page list's
+// "Newsletter" item; FR-008's footer newsletter signup).
+// ----------------------------------------------------------------------------
+model NewsletterSubscriber {
+  id String @id @default(uuid()) @db.Uuid
+
+  email          String    @unique @db.VarChar(255)
+  subscribedAt   DateTime  @default(now()) @map("subscribed_at") @db.Timestamptz(6)
+  unsubscribedAt DateTime? @map("unsubscribed_at") @db.Timestamptz(6)
+
+  /// Phase 5 Part 2 — safe unsubscribe strategy: a per-subscriber,
+  /// cryptographically random, hashed token (same
+  /// generate-raw/store-hash pattern as Phase 4's password-reset and
+  /// email-verification tokens) included in every newsletter email's
+  /// unsubscribe link. Deliberately NOT email-address-based — an
+  /// unsubscribe link keyed only by email would let anyone unsubscribe
+  /// anyone else who they merely know the email address of.
+  unsubscribeTokenHash String @unique @map("unsubscribe_token_hash") @db.VarChar(64)
+
+  @@map("newsletter_subscribers")
+}

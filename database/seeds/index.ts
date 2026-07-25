@@ -1,8 +1,13 @@
 import { PrismaClient } from '@prisma/client';
 import { seedRbac } from './rbac.seed';
+import { seedCms } from './cms.seed';
 
 /**
  * Seed entrypoint (`npm run db:seed` from the repo root).
+ *
+ * Phase 5 (Part 1) addition: seeds real CMS content (pages, navigation,
+ * FAQ) — see `cms.seed.ts`. This is the only way pages get content in
+ * this part (no admin editor UI).
  *
  * Phase 4 addition: seeds the canonical 12-role RBAC catalog (see
  * `rbac.seed.ts`) — the first real seed data in the project. Everything
@@ -48,6 +53,7 @@ async function main(): Promise<void> {
   assertSafeToSeed();
   console.log('🌱 CoachX database seed runner starting...');
   await seedRbac(prisma);
+  await seedCms(prisma);
   console.log('✅ Seed run complete.');
 }
 

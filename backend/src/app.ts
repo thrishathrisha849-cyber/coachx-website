@@ -11,6 +11,7 @@ import { requestIdMiddleware } from './middlewares/request-id.middleware';
 import { requestLoggerMiddleware } from './middlewares/request-logger.middleware';
 import { notFoundMiddleware } from './middlewares/not-found.middleware';
 import { errorHandlerMiddleware } from './middlewares/error-handler.middleware';
+import { getSitemap, getRobotsTxt } from './cms/seo.controller';
 
 /**
  * Builds and configures the Express application. Kept separate from
@@ -52,6 +53,13 @@ export function createApp(): Application {
 
   // --- Observability ---
   app.use(requestLoggerMiddleware);
+
+  // --- SEO — served at the domain root, not under the API prefix
+  // (002 FR-092; docs/public-site/TRACEABILITY.md's architecture-
+  // conflict note explains why this is the one part of SEO that IS
+  // genuinely server-rendered in this Vite/CSR-SPA architecture) ---
+  app.get('/sitemap.xml', getSitemap);
+  app.get('/robots.txt', getRobotsTxt);
 
   // --- Versioned API routes ---
   app.use(config.server.apiPrefix, apiRouter);

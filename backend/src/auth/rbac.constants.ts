@@ -64,6 +64,7 @@ export const BASELINE_PERMISSIONS: BaselinePermission[] = [
   { key: 'user.role.assign', description: 'Change a user’s role assignment (003 FR-130)' },
   { key: 'ticket.manage', description: 'View and manage support tickets (001 US3 acceptance scenario 3)' },
   { key: 'organization.manage_own', description: 'Manage own-organization members/analytics only (001 FR-086)' },
+  { key: 'content.manage', description: 'Create/edit/publish CMS pages, navigation, and announcements (002 FR-084: admin manages public content without a code deployment)' },
 ];
 
 /**
@@ -81,7 +82,7 @@ export const ROLE_PERMISSION_GRANTS: Record<RoleName, string[]> = {
   mentor: ['course.view'],
   community_moderator: ['course.view', 'community.moderate'],
   support_agent: ['course.view', 'ticket.manage'],
-  content_manager: ['course.view', 'course.create', 'course.publish'],
+  content_manager: ['course.view', 'course.create', 'course.publish', 'content.manage'],
   finance_admin: ['course.view', 'payment.refund'],
   platform_admin: [
     'course.view',
@@ -92,6 +93,7 @@ export const ROLE_PERMISSION_GRANTS: Record<RoleName, string[]> = {
     'user.suspend',
     'user.role.assign',
     'ticket.manage',
+    'content.manage',
   ],
   super_admin: BASELINE_PERMISSIONS.map((p) => p.key),
   organization_admin: ['course.view', 'organization.manage_own'],

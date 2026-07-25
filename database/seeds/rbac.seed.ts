@@ -44,6 +44,7 @@ const BASELINE_PERMISSIONS = [
   'user.role.assign',
   'ticket.manage',
   'organization.manage_own',
+  'content.manage',
 ] as const;
 
 const ROLE_PERMISSION_GRANTS: Record<(typeof ROLE_NAMES)[number], string[]> = {
@@ -54,7 +55,7 @@ const ROLE_PERMISSION_GRANTS: Record<(typeof ROLE_NAMES)[number], string[]> = {
   mentor: ['course.view'],
   community_moderator: ['course.view', 'community.moderate'],
   support_agent: ['course.view', 'ticket.manage'],
-  content_manager: ['course.view', 'course.create', 'course.publish'],
+  content_manager: ['course.view', 'course.create', 'course.publish', 'content.manage'],
   finance_admin: ['course.view', 'payment.refund'],
   platform_admin: [
     'course.view',
@@ -65,6 +66,7 @@ const ROLE_PERMISSION_GRANTS: Record<(typeof ROLE_NAMES)[number], string[]> = {
     'user.suspend',
     'user.role.assign',
     'ticket.manage',
+    'content.manage',
   ],
   super_admin: [...BASELINE_PERMISSIONS],
   organization_admin: ['course.view', 'organization.manage_own'],

@@ -1,0 +1,19 @@
+# Public Site / CMS Decision Gates and Known Limitations
+
+Status: this file is **implemented-now** as a record; every row is, by
+definition, not yet fully resolved. Same format as
+`docs/database/DECISION_GATES.md` and `docs/auth/DECISION_GATES.md`.
+
+| # | Gate | Current state | Why deferred | Re-check trigger |
+| --- | --- | --- | --- | --- |
+| 1 | True server-side rendering for `<head>` metadata (FR-092) | Client-side only (`useDocumentHead`) | The approved architecture is a Vite CSR SPA, not Next.js SSR (002/plan.md's own assumption) — introducing SSR is an architecture decision beyond this phase's scope | A deliberate decision to add SSR/SSG (e.g., migrating to Next.js, or adding a prerendering step) |
+| 2 | Funnels, checkout tracking, A/B testing, personalization, campaign attribution (FR-055–074, FR-093–098) | Not implemented | Not named in this message's scope; each depends on features not built (009 payments, 013 CRM) or infrastructure not chosen (analytics pipeline, A/B "same variant" mechanism — 002/spec.md's own `NEEDS CLARIFICATION`) | A future "Part 2" of Phase 5, or explicit instruction |
+| 3 | Logged-in header state / permission-aware nav (FR-007) | Structurally ready (`NavigationItem.requiredPermission`, `Page.audienceRoles`) but always evaluates as guest | No frontend auth/session client exists yet — Phase 4 built backend auth only | A future phase building the frontend login flow and token storage |
+| 4 | Full profile fields on Contact/Testimonials (Author, verification workflow) | Minimal (`ContactSubmission`, block-embedded testimonials) | No CRM (013) for ticket ownership/SLA; no admin UI for a testimonial approval queue | 013 CRM implementation; admin CMS editor implementation |
+| 5 | Help Center, Success Stories, Podcast, Resource Library (FR-048, FR-051, FR-052, FR-054) | Not implemented | Each needs infrastructure/data this part has no source for (voting/ticketing, audio hosting, gated-download tracking, verified-outcome data) | Their respective owning work being scheduled |
+| 6 | Custom HTML block (FR-085) | Modeled but deliberately restrictive (`html: z.string().max(1)` — effectively disabled) | No HTML sanitizer (e.g. DOMPurify) is wired in yet; allowing arbitrary admin HTML without one is a real XSS risk, even from a "trusted" admin | Adding a sanitizer dependency and validating it before loosening this schema |
+| 7 | Rich-text (TEXT block) sanitization | Not sanitized — trusted-input assumption (seed script / direct `content.manage`-gated API only, no editor UI yet) | Same reasoning as #6 — no untrusted-HTML entry path exists yet in this phase | Building the admin CMS editor (the point at which untrusted rich-text input becomes possible) |
+| 8 | Core Web Vitals monitoring, performance budgets per template (FR-106, FR-107) | Not implemented | Needs a Real User Monitoring (RUM) provider, none configured; 002/plan.md itself flags no numeric budget was ever stated in the source PRD | Selecting and provisioning a RUM provider; defining numeric budgets |
+| 9 | Playwright e2e / visual regression (002/plan.md's own Testing section) | Not added — verified instead via build/typecheck/lint + a live dev-server smoke test | Scope/time; 002/plan.md itself flags visual-regression tooling as `NEEDS CLARIFICATION` (not specified in source) | A dedicated frontend-testing task |
+| 10 | Shared `Tag`/`Category` taxonomy across Blog/Courses/Events/Resources | `Page.tags` is a page-owned scalar array, not a shared entity | No second content type needing the same tag vocabulary exists yet | Courses/Events/Resources being built, if they need to share tag vocabulary with Blog |
+| 11 | Known duplication: none introduced this phase | — | RBAC's existing accepted duplication (`docs/auth/DECISION_GATES.md` #16) is unaffected — the new `content.manage` permission was added to both `rbac.constants.ts` and `rbac.seed.ts` consistently | If the two lists are ever found to disagree |
