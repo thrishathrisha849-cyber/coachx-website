@@ -1,0 +1,27 @@
+name: coachx-dev
+
+# Lightweight dev stack: only Postgres runs in Docker; backend/frontend/
+# admin run natively on the host via `npm run dev:*` for fast reload.
+#   docker compose -f infrastructure/docker-compose.dev.yml up -d
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: coachx-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: coachx
+      POSTGRES_PASSWORD: coachx
+      POSTGRES_DB: coachx_dev
+    ports:
+      - '5432:5432'
+    volumes:
+      - coachx-postgres-dev-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U coachx -d coachx_dev']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  coachx-postgres-dev-data:

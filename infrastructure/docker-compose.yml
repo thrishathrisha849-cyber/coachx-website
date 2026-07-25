@@ -1,0 +1,87 @@
+name: coachx
+
+# Local development stack. Run from the repository root:
+#   docker compose -f infrastructure/docker-compose.yml up
+#
+# Infrastructure wiring only. No feature/business containers (mail
+# catcher, search, etc.) are added until the owning feature needs them.
+#
+# Startup order is enforced via health checks, not just container start
+# order: postgres must report healthy before backend starts; backend
+# must report healthy (via its Dockerfile HEALTHCHECK hitting
+# /api/v1/health) before frontend/admin start — see each service's
+# `depends_on.condition` below.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: coachx-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: coachx
+      POSTGRES_PASSWORD: coachx
+      POSTGRES_DB: coachx_dev
+    ports:
+      - '5432:5432'
+    volumes:
+      - coachx-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U coachx -d coachx_dev']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/backend.Dockerfile
+    container_name: coachx-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      PORT: 4000
+      DATABASE_URL: postgresql://coachx:coachx@postgres:5432/coachx_dev?schema=public
+      CORS_ORIGINS: http://localhost:5173,http://localhost:5174
+    ports:
+      - '4000:4000'
+    # Uses the HEALTHCHECK already baked into backend.Dockerfile
+    # (GET /api/v1/health) — no separate compose-level test needed;
+    # declaring it explicitly here documents the contract and is
+    # required for frontend/admin's `condition: service_healthy` below
+    # to work reliably across all Compose versions.
+    healthcheck:
+      test: ['CMD', 'node', '-e', "require('http').get('http://127.0.0.1:4000/api/v1/health',(r)=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/frontend.Dockerfile
+    container_name: coachx-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - '5173:80'
+
+  admin:
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/admin.Dockerfile
+    container_name: coachx-admin
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - '5174:80'
+
+volumes:
+  coachx-postgres-data:

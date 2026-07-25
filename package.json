@@ -1,0 +1,43 @@
+{
+  "name": "coachx-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CoachX Enterprise Platform monorepo — frontend, backend, admin, shared, and database packages.",
+  "workspaces": [
+    "frontend",
+    "backend",
+    "admin",
+    "shared",
+    "database"
+  ],
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev:backend": "npm run dev --workspace=backend",
+    "dev:frontend": "npm run dev --workspace=frontend",
+    "dev:admin": "npm run dev --workspace=admin",
+    "build:shared": "npm run build --workspace=shared",
+    "build:backend": "npm run build --workspace=backend",
+    "build:frontend": "npm run build --workspace=frontend",
+    "build:admin": "npm run build --workspace=admin",
+    "build": "npm run build:shared && npm run build:backend && npm run build:frontend && npm run build:admin",
+    "lint": "npm run lint --workspace=backend && npm run lint --workspace=frontend && npm run lint --workspace=admin",
+    "test": "npm run test --workspace=backend",
+    "test:watch": "npm run test:watch --workspace=backend",
+    "test:coverage": "npm run test:coverage --workspace=backend",
+    "db:generate": "npm run generate --workspace=database",
+    "db:validate": "npm run validate --workspace=database",
+    "db:migrate": "npm run migrate:dev --workspace=database",
+    "db:studio": "npm run studio --workspace=database",
+    "db:seed": "npm run seed --workspace=database",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\" --ignore-path .gitignore",
+    "typecheck": "npm run build:shared && npm run typecheck --workspace=backend && npm run typecheck --workspace=frontend && npm run typecheck --workspace=admin",
+    "dev": "concurrently -n backend,frontend,admin -c blue,green,magenta \"npm:dev:backend\" \"npm:dev:frontend\" \"npm:dev:admin\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "prettier": "^3.3.3"
+  }
+}

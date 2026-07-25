@@ -1,0 +1,26 @@
+// CoachX Enterprise Platform — Prisma Schema
+//
+// Phase 1 (Project Foundation) scope: datasource + generator only.
+// No feature/domain models are defined here yet — those are added
+// feature-by-feature in later implementation phases, following the
+// entity definitions in `specs/<feature>/spec.md` and the ownership
+// boundaries recorded in each feature's `plan.md`.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Example (commented out intentionally — do not uncomment until the
+// owning feature, 001-product-vision-governance / 003-auth-identity-
+// onboarding-dashboard, is actually implemented):
+//
+// model User {
+//   id        String   @id @default(cuid())
+//   createdAt DateTime @default(now())
+//   updatedAt DateTime @updatedAt
+// }

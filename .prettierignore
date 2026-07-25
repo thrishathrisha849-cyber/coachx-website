@@ -1,0 +1,11 @@
+node_modules
+dist
+build
+coverage
+.next
+*.min.js
+mobile/.dart_tool
+mobile/build
+document 1
+document 2
+specs

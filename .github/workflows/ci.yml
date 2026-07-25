@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web-packages:
+    name: Lint, typecheck & build (frontend/backend/admin/shared)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # MUST run before lint/typecheck/test: @coachx/shared is consumed
+      # by backend/frontend/admin via its compiled `dist/` output (see
+      # its package.json "types" field). On a fresh checkout, that
+      # directory does not exist yet — running typecheck first would
+      # fail with "Cannot find module '@coachx/shared'" even though the
+      # source is fine. (Discovered during Phase 2 validation: a fresh
+      # `rm -rf shared/dist && npm run typecheck` reproduced exactly
+      # this failure — this ordering fix closes that gap.)
+      - name: Build shared package
+        run: npm run build:shared
+
+      - name: Validate Prisma schema
+        working-directory: database
+        run: npx prisma validate
+        env:
+          DATABASE_URL: postgresql://coachx:coachx@localhost:5432/coachx_ci?schema=public
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test (backend)
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+  mobile:
+    name: Analyze & test (Flutter mobile)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.3'
+          channel: 'stable'
+
+      - name: Install dependencies
+        working-directory: mobile
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: mobile
+        run: flutter analyze
+
+      - name: Test
+        working-directory: mobile
+        run: flutter test
