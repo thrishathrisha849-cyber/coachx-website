@@ -250,6 +250,13 @@ model User {
   emailVerifications EmailVerificationToken[]
   loginAttempts      LoginAttempt[]
 
+  /// Phase 6 Part 1 — LMS course-instructor assignments. Deliberately
+  /// just a back-relation to CourseInstructor (required by Prisma for
+  /// any explicit FK relation), not a new user/profile table — 006 LMS
+  /// FR "instructor" is a ROLE + assignment record on top of the
+  /// existing User, never a duplicate identity.
+  courseInstructorRoles CourseInstructor[]
+
   @@index([status])
   @@map("users")
 }
@@ -982,4 +989,288 @@ model NewsletterSubscriber {
   unsubscribeTokenHash String @unique @map("unsubscribe_token_hash") @db.VarChar(64)
 
   @@map("newsletter_subscribers")
+}
+
+// ============================================================================
+// Phase 6 Part 1 — Learning Management System: data architecture, course
+// engine, categories, modules, instructor assignment.
+//
+// Owner: 004-lms-courses-learning-paths (Volume 04). Scope: ONLY the course
+// authoring/discovery foundation — CourseCategory, Course, CourseModule,
+// CourseInstructor, and the course publish lifecycle. Lesson content, video/
+// PDF delivery, enrollment, progress, quizzes, assignments, certificates,
+// and reviews are explicitly Part 2/Part 3 (see docs/lms/TRACEABILITY_PART1.md
+// and docs/lms/DECISION_GATES.md) and are NOT modeled here — no placeholder
+// tables for them exist; a future part adds its own models with FKs back to
+// Course/CourseModule as needed.
+//
+// Architecture: builds on the same Express + Prisma + Zod + AppError +
+// deny-by-default-RBAC + AuditEvent foundation as Phases 3–5 — no second
+// ORM, validation framework, auth system, or API-response shape. See
+// docs/lms/ARCHITECTURE.md's "Architecture conflict" note re: 004/plan.md's
+// own NestJS assumption (same accepted-decision-gate pattern as Phases 4–5).
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// CourseCategory — optional self-referencing hierarchy for course browsing/
+// discovery. Archive, never hard-delete, once referenced by a course (a
+// hard delete would either orphan Course.categoryId or require a cascading
+// delete of courses, both unacceptable).
+// ----------------------------------------------------------------------------
+model CourseCategory {
+  id String @id @default(uuid()) @db.Uuid
+
+  name             String  @db.VarChar(120)
+  slug             String  @unique @db.VarChar(160)
+  description      String? @db.Text
+  shortDescription String? @map("short_description") @db.VarChar(300)
+  imageUrl         String? @map("image_url") @db.VarChar(500)
+  icon             String? @db.VarChar(60)
+
+  parentId String?          @map("parent_id") @db.Uuid
+  parent   CourseCategory?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children CourseCategory[] @relation("CategoryHierarchy")
+
+  /// Stable sibling ordering (admin-controlled, reorder API). Not globally
+  /// unique — only meaningful relative to siblings sharing the same parent.
+  sortOrder Int @default(0) @map("sort_order")
+
+  status     CategoryStatus @default(ACTIVE)
+  isFeatured Boolean        @default(false) @map("is_featured")
+
+  /// Small free-form extension bag (e.g. display accent color) — same
+  /// pattern as Page's use of Json for genuinely optional, non-queried
+  /// extras. Size-bounded at the application/validation layer, not by
+  /// Postgres (see lms.validation.ts).
+  metadata Json?
+
+  createdBy String? @map("created_by") @db.Uuid
+  updatedBy String? @map("updated_by") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  courses Course[]
+
+  @@index([parentId])
+  @@index([status, sortOrder])
+  @@map("course_categories")
+}
+
+enum CategoryStatus {
+  ACTIVE
+  ARCHIVED
+
+  @@map("course_category_status")
+}
+
+// ----------------------------------------------------------------------------
+// Course — the primary LMS authoring entity (004 FR "Course Engine").
+// Publish lifecycle mirrors the CMS Page model's DRAFT→…→PUBLISHED shape
+// (docs/public-site/CMS_MODEL.md) with two LMS-specific additions,
+// UNPUBLISHED (a published course pulled back without losing its DRAFT-vs-
+// was-live distinction) and the same read-time publish/expire-window
+// visibility check Page and Announcement already use — no scheduled worker.
+// ----------------------------------------------------------------------------
+model Course {
+  id String @id @default(uuid()) @db.Uuid
+
+  title            String  @db.VarChar(200)
+  slug             String  @unique @db.VarChar(220)
+  subtitle         String? @db.VarChar(300)
+  shortDescription String? @map("short_description") @db.VarChar(300)
+
+  /// Rich-text course description. Sanitized at RENDER time by the
+  /// existing `frontend/src/utils/sanitizeHtml.ts` (DOMPurify allowlist) —
+  /// the same accepted pattern the CMS TEXT block already uses (Phase 5
+  /// Part 2 SECURITY.md), not a second, backend-side sanitizer. See
+  /// docs/lms/SECURITY.md.
+  description String? @db.Text
+
+  thumbnailUrl  String? @map("thumbnail_url") @db.VarChar(500)
+  coverImageUrl String? @map("cover_image_url") @db.VarChar(500)
+  trailerUrl    String? @map("trailer_url") @db.VarChar(500)
+
+  /// Reuses the CMS `PageLanguage` enum (EN/TA/TANGLISH) rather than a
+  /// second, competing language enum — same three-value platform-wide
+  /// language set, no LMS-specific values needed.
+  language PageLanguage @default(EN)
+  level    CourseLevel  @default(ALL_LEVELS)
+
+  status     CourseStatus     @default(DRAFT)
+  visibility CourseVisibility @default(PUBLIC)
+
+  categoryId String?         @map("category_id") @db.Uuid
+  category   CourseCategory? @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  durationMinutes            Int? @map("duration_minutes")
+  estimatedCompletionMinutes Int? @map("estimated_completion_minutes")
+
+  priceType        CoursePriceType @default(FREE) @map("price_type")
+  /// Money-safe integer minor-unit storage (e.g. paise for INR) — NEVER a
+  /// float. No payment processing is implemented here; this is metadata
+  /// only, read by a future 009-membership-payments feature.
+  priceAmountMinor Int             @default(0) @map("price_amount_minor")
+  currency         String          @default("INR") @db.VarChar(3)
+
+  isFeatured      Boolean @default(false) @map("is_featured")
+  enrollmentLimit Int?    @map("enrollment_limit")
+
+  enrollmentStartAt DateTime? @map("enrollment_start_at") @db.Timestamptz(6)
+  enrollmentEndAt   DateTime? @map("enrollment_end_at") @db.Timestamptz(6)
+
+  publishAt DateTime? @map("publish_at") @db.Timestamptz(6)
+  expireAt  DateTime? @map("expire_at") @db.Timestamptz(6)
+
+  // --- SEO fields, same embedded-on-entity pattern as Page (no separate
+  // SeoMetadata join table — see docs/public-site/CMS_MODEL.md §2). ---
+  seoTitle       String? @map("seo_title") @db.VarChar(255)
+  seoDescription String? @map("seo_description") @db.VarChar(500)
+  canonicalUrl   String? @map("canonical_url") @db.VarChar(500)
+
+  metadata Json?
+
+  /// Optimistic-concurrency guard for the admin/instructor edit surface —
+  /// incremented on every update; a future edit UI can send back the
+  /// version it last read and detect a concurrent-edit conflict. Not yet
+  /// enforced at the service layer in Part 1 (no concurrent-edit UI
+  /// exists yet) — see docs/lms/DECISION_GATES.md.
+  version Int @default(1)
+
+  createdBy String? @map("created_by") @db.Uuid
+  updatedBy String? @map("updated_by") @db.Uuid
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  publishedAt DateTime? @map("published_at") @db.Timestamptz(6)
+  archivedAt  DateTime? @map("archived_at") @db.Timestamptz(6)
+
+  modules     CourseModule[]
+  instructors CourseInstructor[]
+
+  @@index([status, visibility])
+  @@index([categoryId])
+  @@index([status, publishAt])
+  @@index([isFeatured])
+  @@map("courses")
+}
+
+enum CourseStatus {
+  DRAFT
+  REVIEW
+  APPROVED
+  SCHEDULED
+  PUBLISHED
+  UNPUBLISHED
+  ARCHIVED
+
+  @@map("course_status")
+}
+
+/// PRIVATE (enrollment-gated visibility) is deliberately NOT modeled yet —
+/// it would need Part 2's Enrollment model to mean anything ("private to
+/// whom"); see docs/lms/DECISION_GATES.md. UNLISTED = publicly reachable by
+/// direct link/slug but excluded from discovery listings/search/sitemap.
+enum CourseVisibility {
+  PUBLIC
+  UNLISTED
+
+  @@map("course_visibility")
+}
+
+enum CourseLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  ALL_LEVELS
+
+  @@map("course_level")
+}
+
+enum CoursePriceType {
+  FREE
+  PAID
+
+  @@map("course_price_type")
+}
+
+// ----------------------------------------------------------------------------
+// CourseModule — ordered top-level content grouping within a Course.
+// Deliberately NO lesson/content model here (004 Part 2 owns Lesson) — a
+// module in Part 1 is a named, ordered "chapter" shell only. Archive, never
+// hard-delete: a future Lesson FK to CourseModule must never be silently
+// orphaned by this phase's own module lifecycle.
+// ----------------------------------------------------------------------------
+model CourseModule {
+  id       String @id @default(uuid()) @db.Uuid
+  courseId String @map("course_id") @db.Uuid
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  title       String  @db.VarChar(200)
+  description String? @db.Text
+
+  /// Stable ordering within the course. Unique per (courseId, position) —
+  /// reordering is a single transactional rewrite of every affected row's
+  /// position (see module.service.ts's `reorderModules`), never a partial
+  /// update that could leave two modules sharing a position.
+  position Int
+
+  status    CourseModuleStatus @default(DRAFT)
+  isPreview Boolean            @default(false) @map("is_preview")
+
+  metadata Json?
+
+  createdBy String? @map("created_by") @db.Uuid
+  updatedBy String? @map("updated_by") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([courseId, position])
+  @@index([courseId, status])
+  @@map("course_modules")
+}
+
+enum CourseModuleStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+
+  @@map("course_module_status")
+}
+
+// ----------------------------------------------------------------------------
+// CourseInstructor — assigns an existing User (holding the `course_instructor`
+// role, or an admin role) to a Course. NOT a new identity/profile table —
+// `user` points directly at the existing Phase-4 User. "Exactly one primary
+// instructor per course" is enforced at TWO layers: the service layer
+// (transactional check-then-set) AND a partial unique index in this
+// migration's raw SQL (`course_instructors_one_primary_per_course`) — Prisma
+// has no `@@unique(... WHERE ...)` syntax, so the DB-level guarantee is
+// hand-added to the generated migration (see docs/lms/DATA_MODEL.md).
+// ----------------------------------------------------------------------------
+model CourseInstructor {
+  id       String @id @default(uuid()) @db.Uuid
+  courseId String @map("course_id") @db.Uuid
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  userId   String @map("user_id") @db.Uuid
+  user     User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  role      InstructorCourseRole @default(INSTRUCTOR)
+  isPrimary Boolean              @default(false) @map("is_primary")
+
+  createdBy String?  @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([courseId, userId])
+  @@index([userId])
+  @@index([courseId, isPrimary])
+  @@map("course_instructors")
+}
+
+enum InstructorCourseRole {
+  INSTRUCTOR
+  TEACHING_ASSISTANT
+
+  @@map("instructor_course_role")
 }

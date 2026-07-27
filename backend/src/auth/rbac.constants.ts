@@ -65,6 +65,21 @@ export const BASELINE_PERMISSIONS: BaselinePermission[] = [
   { key: 'ticket.manage', description: 'View and manage support tickets (001 US3 acceptance scenario 3)' },
   { key: 'organization.manage_own', description: 'Manage own-organization members/analytics only (001 FR-086)' },
   { key: 'content.manage', description: 'Create/edit/publish CMS pages, navigation, and announcements (002 FR-084: admin manages public content without a code deployment)' },
+
+  // --- Phase 6 Part 1 (LMS foundation) ---------------------------------
+  // Extends the EXISTING `course.*` namespace (`course.view`/`course.create`/
+  // `course.publish` already existed from Phase 4) rather than inventing a
+  // parallel `lms.*` prefix — matches this file's own "deliberately small,
+  // not a full platform permission catalog" philosophy and the established
+  // bare `resource.action` naming convention. `course.category.*` is nested
+  // under `course.` (not a bare `category.*`) specifically to avoid a name
+  // collision with an unrelated future feature's own "category" concept.
+  // See docs/lms/RBAC.md for the full rationale.
+  { key: 'course.update', description: 'Edit course metadata without necessarily publishing (006 LMS course engine)' },
+  { key: 'course.archive', description: 'Archive/restore a course (006 LMS course lifecycle)' },
+  { key: 'course.manageInstructors', description: 'Assign/remove/set-primary course instructors (006 LMS instructor assignment)' },
+  { key: 'course.module.manage', description: 'Create/edit/reorder/archive course modules (006 LMS course modules)' },
+  { key: 'course.category.manage', description: 'Create/edit/reorder/archive course categories (006 LMS course categories)' },
 ];
 
 /**
@@ -78,16 +93,38 @@ export const ROLE_PERMISSION_GRANTS: Record<RoleName, string[]> = {
   guest: [],
   registered_free_user: ['course.view'],
   paid_member: ['course.view'],
-  course_instructor: ['course.view', 'course.create'],
+  // 006 LMS: an instructor can author/edit their own assigned course and
+  // its modules, but NOT publish it, archive it, or reassign instructors —
+  // those remain content_manager/platform_admin actions (review-gate
+  // workflow: DRAFT/REVIEW are instructor-editable, APPROVED+ requires an
+  // admin/content-manager permission). Ownership (which course an
+  // instructor may touch) is enforced separately in the service layer —
+  // this permission grant alone is necessary but not sufficient.
+  course_instructor: ['course.view', 'course.create', 'course.update', 'course.module.manage'],
   mentor: ['course.view'],
   community_moderator: ['course.view', 'community.moderate'],
   support_agent: ['course.view', 'ticket.manage'],
-  content_manager: ['course.view', 'course.create', 'course.publish', 'content.manage'],
+  content_manager: [
+    'course.view',
+    'course.create',
+    'course.update',
+    'course.publish',
+    'course.archive',
+    'course.manageInstructors',
+    'course.module.manage',
+    'course.category.manage',
+    'content.manage',
+  ],
   finance_admin: ['course.view', 'payment.refund'],
   platform_admin: [
     'course.view',
     'course.create',
+    'course.update',
     'course.publish',
+    'course.archive',
+    'course.manageInstructors',
+    'course.module.manage',
+    'course.category.manage',
     'community.moderate',
     'payment.refund',
     'user.suspend',
