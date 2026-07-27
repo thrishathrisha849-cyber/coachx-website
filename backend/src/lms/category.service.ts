@@ -35,6 +35,17 @@ export interface CategoryInput {
 /** Update-only variant: `parentId` may be explicitly `null` to clear it (move to root). */
 export type CategoryUpdateInput = Omit<Partial<CategoryInput>, 'parentId'> & { parentId?: string | null };
 
+/**
+ * 004 FR-014 names exactly "category, subcategory" — a 2-level model.
+ * `CourseCategory`'s self-referencing structure is a valid, documented
+ * superset (docs/lms/DATA_MODEL.md / DECISION_GATES.md), but capped at
+ * MAX_CATEGORY_DEPTH so it can never silently grow into an arbitrary-depth
+ * tree the spec never asked for. Depth is measured as: a root category has
+ * depth 0 ("Category"); a category whose parent is a root has depth 1
+ * ("Subcategory") — the maximum allowed parent chain length.
+ */
+export const MAX_CATEGORY_DEPTH = 2;
+
 async function assertParentValid(parentId: string | undefined, selfId: string | undefined, tx: Parameters<typeof findCategoryById>[1]) {
   if (!parentId) return;
 
@@ -47,11 +58,29 @@ async function assertParentValid(parentId: string | undefined, selfId: string | 
     throw AppError.badRequest('Invalid parent category');
   }
 
+  // Depth cap: the chosen parent must itself be a ROOT category (depth 0)
+  // — i.e. it must not already have a parent — otherwise this category
+  // would land at depth 2+, beyond FR-014's category/subcategory model.
+  if (parent.parentId) {
+    throw AppError.badRequest(
+      `Category hierarchy is limited to ${MAX_CATEGORY_DEPTH} levels (category/subcategory) — the chosen parent is already a subcategory`,
+    );
+  }
+
   if (selfId) {
     // Prevent ancestor cycles: the new parent must not be a descendant of self.
     const descendants = await findDescendantCategoryIds(selfId, tx);
     if (descendants.has(parentId)) {
       throw AppError.conflict('Cannot set parent: this would create a category hierarchy cycle');
+    }
+
+    // Depth cap, other direction: if `self` already has children (it is
+    // currently a root/depth-0 category), giving it a parent would push
+    // those existing children to depth 2 — also rejected.
+    if (descendants.size > 0) {
+      throw AppError.badRequest(
+        `Cannot assign a parent to this category — it already has subcategories, and the hierarchy is limited to ${MAX_CATEGORY_DEPTH} levels`,
+      );
     }
   }
 }

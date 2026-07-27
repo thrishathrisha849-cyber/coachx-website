@@ -103,6 +103,23 @@ export function CourseDetailPage() {
             />
           )}
 
+          {course.learningOutcomes.length > 0 && (
+            // 004 FR-020: course overview MUST show outcomes.
+            <section className="mt-8">
+              <h2 className="mb-3 text-xl font-bold text-slate-900 dark:text-white">What you'll learn</h2>
+              <ul className="grid gap-2 sm:grid-cols-2">
+                {course.learningOutcomes.map((outcome) => (
+                  <li key={outcome} className="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-300">
+                    <span aria-hidden="true" className="text-brand-600 dark:text-brand-400">
+                      ✓
+                    </span>
+                    {outcome}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           {course.modules.length > 0 && (
             <section className="mt-8">
               <h2 className="mb-3 text-xl font-bold text-slate-900 dark:text-white">Course content</h2>
@@ -111,6 +128,11 @@ export function CourseDetailPage() {
                   <li key={module.id} className="flex items-center justify-between p-4">
                     <span className="text-sm font-medium text-slate-900 dark:text-white">
                       {index + 1}. {module.title}
+                      {module.estimatedDurationMinutes && (
+                        <span className="ml-2 font-normal text-slate-500 dark:text-slate-400">
+                          ({module.estimatedDurationMinutes} min)
+                        </span>
+                      )}
                     </span>
                     {module.isPreview && (
                       <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">

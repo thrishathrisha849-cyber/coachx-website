@@ -5,6 +5,11 @@ import { z } from 'zod';
  * `validate()` middleware standard as every prior phase (no second
  * validation framework) — see `backend/src/cms/cms.validation.ts` for the
  * template this file follows structurally.
+ *
+ * CORRECTION (spec-alignment pass): `COURSE_STATUS_VALUES` below was
+ * rebuilt from 004/spec.md FR-015/FR-100 — see
+ * docs/lms/COURSE_LIFECYCLE.md. The prior version used a generic
+ * prompt-supplied list (`REVIEW`/`UNPUBLISHED`) with no basis in the spec.
  */
 
 const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -30,6 +35,22 @@ const paginationQuery = z.object({
 // --- Sort whitelists (never accept an arbitrary caller-supplied column) ---
 export const COURSE_SORT_VALUES = ['newest', 'title', 'featured'] as const;
 export const CATEGORY_SORT_VALUES = ['sortOrder', 'name'] as const;
+
+/** 004 FR-015/FR-100 — see docs/lms/COURSE_LIFECYCLE.md for the reconciliation. */
+export const COURSE_STATUS_VALUES = [
+  'DRAFT',
+  'SUBMITTED_FOR_REVIEW',
+  'CHANGES_REQUESTED',
+  'APPROVED',
+  'SCHEDULED',
+  'PUBLISHED',
+  'UNLISTED',
+  'ENROLLMENT_PAUSED',
+  'ARCHIVED',
+  'RETIRED',
+] as const;
+
+const stringArray = (maxItems: number, maxLen: number) => z.array(z.string().trim().max(maxLen)).max(maxItems);
 
 // ============================================================================
 // Categories
@@ -99,15 +120,23 @@ const courseBodyBase = z
     subtitle: z.string().max(300).optional(),
     shortDescription: z.string().max(300).optional(),
     description: z.string().max(20000).optional(),
+    // 004 FR-014 — action-based outcome statements, tags, and short
+    // catalog copy (see schema.prisma's Course doc comment for why these
+    // are plain arrays/text, not structured/queryable entities).
+    learningOutcomes: stringArray(20, 300).default([]),
+    tags: stringArray(20, 50).default([]),
+    targetAudience: z.string().max(1000).optional(),
+    toolsRequired: stringArray(30, 100).default([]),
     thumbnailUrl: z.string().max(500).optional(),
     coverImageUrl: z.string().max(500).optional(),
     trailerUrl: z.string().max(500).optional(),
     language: z.enum(['EN', 'TA', 'TANGLISH']).default('EN'),
     level: z.enum(['BEGINNER', 'INTERMEDIATE', 'ADVANCED', 'ALL_LEVELS']).default('ALL_LEVELS'),
-    visibility: z.enum(['PUBLIC', 'UNLISTED']).default('PUBLIC'),
     categoryId: uuid().optional(),
     durationMinutes: z.number().int().min(0).max(100000).optional(),
     estimatedCompletionMinutes: z.number().int().min(0).max(100000).optional(),
+    weeklyCommitmentMinutes: z.number().int().min(0).max(100000).optional(),
+    certificateAvailable: z.boolean().default(false),
     priceType: priceType.default('FREE'),
     priceAmountMinor: z.number().int().min(0).max(100_000_000).default(0),
     currency: z.string().length(3).default('INR'),
@@ -148,15 +177,20 @@ export const updateCourseSchema = z.object({
       subtitle: z.string().max(300).optional(),
       shortDescription: z.string().max(300).optional(),
       description: z.string().max(20000).optional(),
+      learningOutcomes: stringArray(20, 300).optional(),
+      tags: stringArray(20, 50).optional(),
+      targetAudience: z.string().max(1000).optional(),
+      toolsRequired: stringArray(30, 100).optional(),
       thumbnailUrl: z.string().max(500).optional(),
       coverImageUrl: z.string().max(500).optional(),
       trailerUrl: z.string().max(500).optional(),
       language: z.enum(['EN', 'TA', 'TANGLISH']).optional(),
       level: z.enum(['BEGINNER', 'INTERMEDIATE', 'ADVANCED', 'ALL_LEVELS']).optional(),
-      visibility: z.enum(['PUBLIC', 'UNLISTED']).optional(),
       categoryId: uuid().nullable().optional(),
       durationMinutes: z.number().int().min(0).max(100000).optional(),
       estimatedCompletionMinutes: z.number().int().min(0).max(100000).optional(),
+      weeklyCommitmentMinutes: z.number().int().min(0).max(100000).optional(),
+      certificateAvailable: z.boolean().optional(),
       priceType: priceType.optional(),
       priceAmountMinor: z.number().int().min(0).max(100_000_000).optional(),
       currency: z.string().length(3).optional(),
@@ -180,9 +214,16 @@ export const updateCourseSchema = z.object({
 
 export const changeCourseStatusSchema = z.object({
   params: z.object({ id: uuid() }),
-  body: z.object({
-    status: z.enum(['DRAFT', 'REVIEW', 'APPROVED', 'SCHEDULED', 'PUBLISHED', 'UNPUBLISHED', 'ARCHIVED']),
-  }),
+  body: z
+    .object({
+      status: z.enum(COURSE_STATUS_VALUES),
+      /** Required (checked at the service layer) only when status === 'CHANGES_REQUESTED'. */
+      reviewNote: z.string().trim().max(5000).optional(),
+    })
+    .refine((b) => b.status !== 'CHANGES_REQUESTED' || !!b.reviewNote?.trim(), {
+      message: 'reviewNote is required when requesting changes',
+      path: ['reviewNote'],
+    }),
 });
 
 export const courseIdParamSchema = z.object({ params: z.object({ id: uuid() }) });
@@ -203,7 +244,7 @@ export const publicCourseQuerySchema = z.object({
 export const adminCourseQuerySchema = z.object({
   query: paginationQuery.extend({
     q: z.string().trim().max(100).optional(),
-    status: z.enum(['DRAFT', 'REVIEW', 'APPROVED', 'SCHEDULED', 'PUBLISHED', 'UNPUBLISHED', 'ARCHIVED']).optional(),
+    status: z.enum(COURSE_STATUS_VALUES).optional(),
     categoryId: uuid().optional(),
     instructorId: uuid().optional(),
     sort: z.enum(COURSE_SORT_VALUES).default('newest'),
@@ -240,11 +281,30 @@ export const setPrimaryInstructorSchema = z.object({
 // Modules
 // ============================================================================
 
+/** 004 FR-034 — the subset of release-rule types meaningful without a Cohort entity (not built). */
+const MODULE_RELEASE_RULE_TYPES = [
+  'IMMEDIATE',
+  'DAYS_AFTER_ENROLLMENT',
+  'FIXED_DATE',
+  'AFTER_PREVIOUS_MODULE',
+  'INSTRUCTOR_RELEASE',
+] as const;
+
+/** 004 FR-052 — only the two types meaningful before Part 2's Lesson model exists. */
+const MODULE_COMPLETION_RULE_TYPES = ['MANUAL', 'INSTRUCTOR_APPROVAL'] as const;
+
 const moduleBodyBase = z.object({
   title: z.string().trim().min(2).max(200),
   description: z.string().max(5000).optional(),
+  outcome: z.string().max(500).optional(),
   position: z.number().int().min(0).max(100000).optional(),
+  estimatedDurationMinutes: z.number().int().min(0).max(100000).optional(),
+  isMandatory: z.boolean().default(true),
   isPreview: z.boolean().default(false),
+  prerequisiteModuleId: uuid().nullable().optional(),
+  releaseRuleType: z.enum(MODULE_RELEASE_RULE_TYPES).default('IMMEDIATE'),
+  releaseRuleValue: metadataSchema,
+  completionRuleType: z.enum(MODULE_COMPLETION_RULE_TYPES).default('MANUAL'),
   metadata: metadataSchema,
 });
 

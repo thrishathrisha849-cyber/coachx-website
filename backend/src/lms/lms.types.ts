@@ -37,19 +37,31 @@ export interface PublicCourseInstructor {
   isPrimary: boolean;
 }
 
-/** Public/discovery-safe module shape — no internal metadata/audit fields. */
+/** Public/discovery-safe module shape — no internal metadata/audit fields. FR-016. */
 export interface PublicCourseModule {
   id: string;
   title: string;
   description: string | null;
+  outcome: string | null;
   position: number;
+  estimatedDurationMinutes: number | null;
+  isMandatory: boolean;
   isPreview: boolean;
 }
 
-/** Admin/instructor-facing module shape — includes lifecycle/audit fields. */
+/**
+ * Admin/instructor-facing module shape — includes lifecycle/audit fields
+ * and the Part-1 configuration-only release/completion-rule fields (FR-034,
+ * FR-052 — see schema.prisma's `CourseModule` doc comment: stored, not yet
+ * enforced).
+ */
 export interface AdminCourseModule extends PublicCourseModule {
   courseId: string;
   status: string;
+  prerequisiteModuleId: string | null;
+  releaseRuleType: string;
+  releaseRuleValue: unknown;
+  completionRuleType: string;
   metadata: unknown;
   createdBy: string | null;
   updatedBy: string | null;
@@ -59,8 +71,8 @@ export interface AdminCourseModule extends PublicCourseModule {
 
 /**
  * Public/discovery-safe course shape. Deliberately excludes: internal
- * metadata, review notes, createdBy/updatedBy, version, exact enrollment
- * counts, and any field an unauthenticated caller must never see (matches
+ * metadata, review notes, createdBy/updatedBy/reviewedBy/publishedBy,
+ * version, and any field an unauthenticated caller must never see (matches
  * the same explicit-serializer discipline `cms.types.ts`'s `RenderedPage`
  * already established — never return a raw Prisma row from a public route).
  */
@@ -71,6 +83,10 @@ export interface PublicCourse {
   subtitle: string | null;
   shortDescription: string | null;
   description: string | null;
+  learningOutcomes: string[];
+  tags: string[];
+  targetAudience: string | null;
+  toolsRequired: string[];
   thumbnailUrl: string | null;
   coverImageUrl: string | null;
   trailerUrl: string | null;
@@ -79,10 +95,16 @@ export interface PublicCourse {
   category: PublicCourseCategory | null;
   durationMinutes: number | null;
   estimatedCompletionMinutes: number | null;
+  weeklyCommitmentMinutes: number | null;
+  certificateAvailable: boolean;
   priceType: string;
   priceAmountMinor: number;
   currency: string;
   isFeatured: boolean;
+  /** Placeholder aggregate — see schema.prisma's Course doc comment. Never fabricated; null/0 until Part 2 (learnerCount) / Part 3 (rating) populate it. */
+  ratingAverage: number | null;
+  ratingCount: number;
+  learnerCount: number;
   instructors: PublicCourseInstructor[];
   seo: {
     title: string;
@@ -105,17 +127,19 @@ export interface PublicCourseWithModules extends PublicCourse {
  */
 export interface AdminCourse extends Omit<PublicCourse, 'category' | 'instructors'> {
   status: string;
-  visibility: string;
   categoryId: string | null;
   enrollmentLimit: number | null;
   enrollmentStartAt: Date | null;
   enrollmentEndAt: Date | null;
   publishAt: Date | null;
   expireAt: Date | null;
+  reviewNotes: string | null;
   metadata: unknown;
   version: number;
   createdBy: string | null;
   updatedBy: string | null;
+  reviewedBy: string | null;
+  publishedBy: string | null;
   createdAt: Date;
   archivedAt: Date | null;
   instructors: PublicCourseInstructor[];

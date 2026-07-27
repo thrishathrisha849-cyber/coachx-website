@@ -24,7 +24,10 @@ export interface CourseModule {
   id: string;
   title: string;
   description: string | null;
+  outcome: string | null;
   position: number;
+  estimatedDurationMinutes: number | null;
+  isMandatory: boolean;
   isPreview: boolean;
 }
 
@@ -35,6 +38,10 @@ export interface Course {
   subtitle: string | null;
   shortDescription: string | null;
   description: string | null;
+  learningOutcomes: string[];
+  tags: string[];
+  targetAudience: string | null;
+  toolsRequired: string[];
   thumbnailUrl: string | null;
   coverImageUrl: string | null;
   trailerUrl: string | null;
@@ -43,10 +50,16 @@ export interface Course {
   category: CourseCategory | null;
   durationMinutes: number | null;
   estimatedCompletionMinutes: number | null;
+  weeklyCommitmentMinutes: number | null;
+  certificateAvailable: boolean;
   priceType: string;
   priceAmountMinor: number;
   currency: string;
   isFeatured: boolean;
+  /** Placeholder aggregate — see backend's Course schema doc comment. Null/0 until Part 2/3 populate it; never fabricated. */
+  ratingAverage: number | null;
+  ratingCount: number;
+  learnerCount: number;
   instructors: CourseInstructor[];
   seo: { title: string; description: string | null; canonicalUrl: string | null };
   publishedAt: string | null;

@@ -4,6 +4,9 @@ import {
   createCategorySchema,
   updateCategorySchema,
   publicCourseQuerySchema,
+  changeCourseStatusSchema,
+  createModuleSchema,
+  COURSE_STATUS_VALUES,
 } from '../../src/lms/lms.validation';
 
 const baseCourseBody = {
@@ -138,6 +141,71 @@ describe('lms.validation — createCategorySchema / updateCategorySchema', () =>
     const result = updateCategorySchema.safeParse({
       body: { parentId: null },
       params: { id: '11111111-1111-1111-1111-111111111111' },
+      query: {},
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('lms.validation — changeCourseStatusSchema (004 FR-015/FR-100 alignment)', () => {
+  const id = '11111111-1111-1111-1111-111111111111';
+
+  it('accepts every FR-015/FR-100-aligned status value', () => {
+    for (const status of COURSE_STATUS_VALUES) {
+      const body = status === 'CHANGES_REQUESTED' ? { status, reviewNote: 'needs work' } : { status };
+      const result = changeCourseStatusSchema.safeParse({ body, params: { id }, query: {} });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it('rejects a generic-prompt-era status value that is not in FR-015/FR-100 (REVIEW, UNPUBLISHED)', () => {
+    for (const status of ['REVIEW', 'UNPUBLISHED']) {
+      const result = changeCourseStatusSchema.safeParse({ body: { status }, params: { id }, query: {} });
+      expect(result.success).toBe(false);
+    }
+  });
+
+  it('rejects CHANGES_REQUESTED without a reviewNote', () => {
+    const result = changeCourseStatusSchema.safeParse({ body: { status: 'CHANGES_REQUESTED' }, params: { id }, query: {} });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts CHANGES_REQUESTED with a reviewNote', () => {
+    const result = changeCourseStatusSchema.safeParse({
+      body: { status: 'CHANGES_REQUESTED', reviewNote: 'Add a trailer video' },
+      params: { id },
+      query: {},
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('lms.validation — createModuleSchema (004 FR-016/FR-034/FR-052 fields)', () => {
+  const courseId = '11111111-1111-1111-1111-111111111111';
+
+  it('accepts a minimal module and defaults releaseRuleType/completionRuleType', () => {
+    const result = createModuleSchema.safeParse({ body: { title: 'Module 1' }, params: { courseId }, query: {} });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.body.releaseRuleType).toBe('IMMEDIATE');
+      expect(result.data.body.completionRuleType).toBe('MANUAL');
+      expect(result.data.body.isMandatory).toBe(true);
+    }
+  });
+
+  it('rejects an unsupported releaseRuleType (a value not in FR-034s Cohort-free subset)', () => {
+    const result = createModuleSchema.safeParse({
+      body: { title: 'Module 1', releaseRuleType: 'COHORT_SCHEDULE' },
+      params: { courseId },
+      query: {},
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts an explicit prerequisiteModuleId', () => {
+    const result = createModuleSchema.safeParse({
+      body: { title: 'Module 2', prerequisiteModuleId: '22222222-2222-2222-2222-222222222222' },
+      params: { courseId },
       query: {},
     });
     expect(result.success).toBe(true);

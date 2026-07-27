@@ -8,6 +8,7 @@ import {
   assertValidCourseTransition,
   assertPublishReady,
   assertHasPublishableModule,
+  isCourseVisibleByDirectLink,
 } from './course-lifecycle.policy';
 import {
   findCourseBySlug,
@@ -32,15 +33,20 @@ export interface CourseInput {
   subtitle?: string;
   shortDescription?: string;
   description?: string;
+  learningOutcomes?: string[];
+  tags?: string[];
+  targetAudience?: string;
+  toolsRequired?: string[];
   thumbnailUrl?: string;
   coverImageUrl?: string;
   trailerUrl?: string;
   language?: string;
   level?: string;
-  visibility?: string;
   categoryId?: string;
   durationMinutes?: number;
   estimatedCompletionMinutes?: number;
+  weeklyCommitmentMinutes?: number;
+  certificateAvailable?: boolean;
   priceType?: string;
   priceAmountMinor?: number;
   currency?: string;
@@ -83,15 +89,20 @@ export async function createNewCourse(input: CourseInput, actorId: string): Prom
         subtitle: input.subtitle,
         shortDescription: input.shortDescription,
         description: input.description,
+        learningOutcomes: input.learningOutcomes ?? [],
+        tags: input.tags ?? [],
+        targetAudience: input.targetAudience,
+        toolsRequired: input.toolsRequired ?? [],
         thumbnailUrl: input.thumbnailUrl,
         coverImageUrl: input.coverImageUrl,
         trailerUrl: input.trailerUrl,
         language: (input.language ?? 'EN') as never,
         level: (input.level ?? 'ALL_LEVELS') as never,
-        visibility: (input.visibility ?? 'PUBLIC') as never,
         ...(input.categoryId ? { category: { connect: { id: input.categoryId } } } : {}),
         durationMinutes: input.durationMinutes,
         estimatedCompletionMinutes: input.estimatedCompletionMinutes,
+        weeklyCommitmentMinutes: input.weeklyCommitmentMinutes,
+        certificateAvailable: input.certificateAvailable ?? false,
         priceType: (input.priceType ?? 'FREE') as never,
         priceAmountMinor: input.priceAmountMinor ?? 0,
         currency: input.currency ?? 'INR',
@@ -130,8 +141,8 @@ export async function updateExistingCourse(
   return withTransaction(async (tx) => {
     const existing = await findCourseById(id, tx);
     if (!existing) throw AppError.notFound('Course not found');
-    if (existing.status === 'ARCHIVED') {
-      throw AppError.badRequest('Cannot modify an archived course — restore it first');
+    if (existing.status === 'ARCHIVED' || existing.status === 'RETIRED') {
+      throw AppError.badRequest(`Cannot modify a course with status ${existing.status} — restore it first`);
     }
 
     const updated = await updateCourse(
@@ -141,12 +152,15 @@ export async function updateExistingCourse(
         ...(input.subtitle !== undefined ? { subtitle: input.subtitle } : {}),
         ...(input.shortDescription !== undefined ? { shortDescription: input.shortDescription } : {}),
         ...(input.description !== undefined ? { description: input.description } : {}),
+        ...(input.learningOutcomes !== undefined ? { learningOutcomes: input.learningOutcomes } : {}),
+        ...(input.tags !== undefined ? { tags: input.tags } : {}),
+        ...(input.targetAudience !== undefined ? { targetAudience: input.targetAudience } : {}),
+        ...(input.toolsRequired !== undefined ? { toolsRequired: input.toolsRequired } : {}),
         ...(input.thumbnailUrl !== undefined ? { thumbnailUrl: input.thumbnailUrl } : {}),
         ...(input.coverImageUrl !== undefined ? { coverImageUrl: input.coverImageUrl } : {}),
         ...(input.trailerUrl !== undefined ? { trailerUrl: input.trailerUrl } : {}),
         ...(input.language !== undefined ? { language: input.language as never } : {}),
         ...(input.level !== undefined ? { level: input.level as never } : {}),
-        ...(input.visibility !== undefined ? { visibility: input.visibility as never } : {}),
         ...(input.categoryId !== undefined
           ? input.categoryId === null
             ? { category: { disconnect: true } }
@@ -156,6 +170,10 @@ export async function updateExistingCourse(
         ...(input.estimatedCompletionMinutes !== undefined
           ? { estimatedCompletionMinutes: input.estimatedCompletionMinutes }
           : {}),
+        ...(input.weeklyCommitmentMinutes !== undefined
+          ? { weeklyCommitmentMinutes: input.weeklyCommitmentMinutes }
+          : {}),
+        ...(input.certificateAvailable !== undefined ? { certificateAvailable: input.certificateAvailable } : {}),
         ...(input.priceType !== undefined ? { priceType: input.priceType as never } : {}),
         ...(input.priceAmountMinor !== undefined ? { priceAmountMinor: input.priceAmountMinor } : {}),
         ...(input.currency !== undefined ? { currency: input.currency } : {}),
@@ -194,14 +212,34 @@ export async function updateExistingCourse(
   });
 }
 
-export async function changeCourseStatus(id: string, newStatus: string, actorId: string): Promise<AdminCourse> {
+/**
+ * `reviewNote` is required when transitioning to `CHANGES_REQUESTED` (the
+ * reviewer's explanation of what must change — 004 FR-100's role-attributed
+ * workflow implies a reviewer always leaves feedback when rejecting), and
+ * optional/ignored for every other transition. Cleared automatically on
+ * every DRAFT/SUBMITTED_FOR_REVIEW re-entry so it never shows stale
+ * feedback against a resubmitted course.
+ */
+export async function changeCourseStatus(
+  id: string,
+  newStatus: string,
+  actorId: string,
+  reviewNote?: string,
+): Promise<AdminCourse> {
   return withTransaction(async (tx) => {
     const existing = await findCourseById(id, tx);
     if (!existing) throw AppError.notFound('Course not found');
 
     assertValidCourseTransition(existing.status, newStatus);
 
-    if (newStatus === 'PUBLISHED' || newStatus === 'SCHEDULED') {
+    if (newStatus === 'CHANGES_REQUESTED' && !reviewNote?.trim()) {
+      throw AppError.badRequest('A review note is required when requesting changes');
+    }
+
+    // 004 FR-100: Approved is the point the workflow defines as "ready to
+    // go live" — readiness/module-count gates run HERE, not at
+    // publish/schedule time (see course-lifecycle.policy.ts doc comment).
+    if (newStatus === 'APPROVED') {
       assertPublishReady({
         title: existing.title,
         slug: existing.slug,
@@ -209,7 +247,6 @@ export async function changeCourseStatus(id: string, newStatus: string, actorId:
         description: existing.description,
         categoryId: existing.categoryId,
         thumbnailUrl: existing.thumbnailUrl,
-        visibility: existing.visibility,
         publishAt: existing.publishAt,
         expireAt: existing.expireAt,
         seoTitle: existing.seoTitle,
@@ -220,12 +257,17 @@ export async function changeCourseStatus(id: string, newStatus: string, actorId:
     }
 
     const isFirstPublish = newStatus === 'PUBLISHED' && !existing.publishedAt;
+    const clearsReviewNotes = newStatus === 'DRAFT' || newStatus === 'SUBMITTED_FOR_REVIEW';
 
     const updated = await updateCourse(
       id,
       {
         status: newStatus as never,
         updatedBy: actorId,
+        ...(newStatus === 'CHANGES_REQUESTED' ? { reviewNotes: reviewNote, reviewedBy: actorId } : {}),
+        ...(clearsReviewNotes ? { reviewNotes: null } : {}),
+        ...(newStatus === 'APPROVED' ? { reviewedBy: actorId } : {}),
+        ...(newStatus === 'PUBLISHED' ? { publishedBy: actorId } : {}),
         ...(isFirstPublish ? { publishedAt: new Date() } : {}),
         ...(newStatus === 'ARCHIVED' ? { archivedAt: new Date() } : {}),
       },
@@ -242,7 +284,7 @@ export async function changeCourseStatus(id: string, newStatus: string, actorId:
         resourceType: 'course',
         resourceId: id,
         beforeState: { status: existing.status },
-        afterState: { status: newStatus },
+        afterState: { status: newStatus, reviewNote: newStatus === 'CHANGES_REQUESTED' ? reviewNote : undefined },
       },
       tx,
     );
@@ -264,13 +306,12 @@ export async function restoreCourse(id: string, actorId: string): Promise<AdminC
 export async function getPublicCourseBySlug(slug: string): Promise<PublicCourseWithModules> {
   const course = await findCourseBySlug(slug);
   // Deliberately the SAME "not found" for a missing slug and a slug that
-  // exists but isn't publicly visible (draft/unpublished/expired) — never
-  // distinguish the two to a public caller (no draft-existence leak).
-  if (!course || course.status !== 'PUBLISHED') throw AppError.notFound('Course not found');
-
-  const now = new Date();
-  if (course.publishAt && course.publishAt > now) throw AppError.notFound('Course not found');
-  if (course.expireAt && course.expireAt <= now) throw AppError.notFound('Course not found');
+  // exists but isn't publicly visible (draft/changes-requested/archived/
+  // expired/etc.) — never distinguish the two to a public caller (no
+  // draft-existence leak). `isCourseVisibleByDirectLink` additionally
+  // allows UNLISTED here (FR-015) — a status the LISTING query
+  // deliberately never returns (see course.repository.ts).
+  if (!course || !isCourseVisibleByDirectLink(course)) throw AppError.notFound('Course not found');
 
   const modules = await findVisibleModulesByCourse(course.id);
   return toPublicCourseWithModules(course, modules);

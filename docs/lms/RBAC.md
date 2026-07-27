@@ -56,11 +56,12 @@ actor who can create a module can reasonably reorder one).
 
 **`course_instructor` deliberately does NOT hold `course.publish` or
 `course.archive` or `course.manageInstructors`.** An instructor can
-author/edit their OWN assigned course's metadata and modules (DRAFT/
-REVIEW-stage work), but publishing, archiving, and instructor
-reassignment remain `content_manager`/`platform_admin` actions — the
-brief's explicit "Instructor cannot publish unless explicitly
-permitted."
+author/edit their OWN assigned course's metadata and modules
+(`DRAFT`/`SUBMITTED_FOR_REVIEW`-stage work, including resubmitting after
+`CHANGES_REQUESTED`), but review decisions (approve/request changes),
+publishing, archiving, and instructor reassignment remain
+`content_manager`/`platform_admin` actions — the spec's explicit
+"Instructor cannot publish unless explicitly permitted."
 
 ## Two-layer authorization: permission + ownership
 
@@ -71,18 +72,35 @@ in `course.service.ts`), enforced on every route under
 `/api/v1/lms/instructor/*`. See `docs/lms/SECURITY.md` for the IDOR
 threat this closes.
 
-## Body-aware permission check: publishing
+## Body-aware permission check: review/publish/archive tiers
 
-The route-level `requirePermission(...)` middleware cannot see the
-request BODY (only the route path is known when middleware runs), so
-`POST /api/v1/lms/admin/courses/:id/status`'s route only requires the
-baseline `course.update` (so a `course_instructor` CAN submit
-`DRAFT → REVIEW`), and `admin-lms.controller.ts`'s `postCourseStatus`
-handler does a SECOND, body-aware check: transitioning specifically
-INTO `PUBLISHED`/`SCHEDULED` additionally requires `course.publish` via
-`roleHasPermission()`, checked in application code before calling the
-service. Verified by an integration test asserting an instructor's
-direct attempt at this endpoint is rejected with 403.
+**CORRECTED (spec-alignment pass)** — the original check only gated
+`PUBLISHED`/`SCHEDULED`; it now covers every status the FR-100/FR-015
+workflow adds. The route-level `requirePermission(...)` middleware
+cannot see the request BODY (only the route path is known when
+middleware runs), so `POST /api/v1/lms/admin/courses/:id/status`'s route
+only requires the baseline `course.update` (so a `course_instructor` CAN
+submit `DRAFT → SUBMITTED_FOR_REVIEW`, or resubmit from
+`CHANGES_REQUESTED`), and `admin-lms.controller.ts`'s `postCourseStatus`
+handler does a SECOND, body-aware check:
+
+- Target status `CHANGES_REQUESTED`, `APPROVED`, `SCHEDULED`, or
+  `PUBLISHED` → requires `course.publish` (the reviewer/publisher tier —
+  FR-100's Author/Reviewer/Publisher role separation is expressed at the
+  permission level as "editor" vs. "reviewer-or-publisher," not as 4
+  separate granular permissions, per this file's "do not invent dozens
+  of placeholder permissions" philosophy).
+- Target status `UNLISTED`, `ENROLLMENT_PAUSED`, `ARCHIVED`, or
+  `RETIRED` → requires `course.archive` (the same permission the
+  dedicated `/archive` and `/restore` endpoints already use — so the
+  generic status endpoint can't be used to bypass that gate).
+- Target status `SUBMITTED_FOR_REVIEW` or `DRAFT` → the baseline
+  `course.update` is sufficient (an instructor's own submit/resubmit/
+  pull-back actions).
+
+Verified by an integration test asserting an instructor can submit their
+own course for review but is rejected (403) attempting to approve,
+publish, or archive it.
 
 ## Seed mechanism
 

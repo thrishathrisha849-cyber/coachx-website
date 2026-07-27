@@ -8,9 +8,14 @@ Status: **Implemented**. Same graceful-skip pattern established in
 
 | Layer | File | DB required? | Count |
 | --- | --- | --- | --- |
-| Unit | `tests/unit/course-lifecycle.unit.test.ts` | No | 21 |
-| Unit | `tests/unit/lms-validation.unit.test.ts` | No | 17 |
-| Integration | `tests/integration/lms.integration.test.ts` | **Yes** | 18 |
+| Unit | `tests/unit/course-lifecycle.unit.test.ts` | No | 31 |
+| Unit | `tests/unit/lms-validation.unit.test.ts` | No | 24 |
+| Integration | `tests/integration/lms.integration.test.ts` | **Yes** | 25 |
+
+(Counts as of the spec-alignment correction pass — grew from the
+original 21/17/18 as tests were added for the corrected FR-015/FR-100
+lifecycle, category depth cap, module prerequisites, and the required
+review-note rule; see below.)
 
 All unit tests run and pass unconditionally — `course-lifecycle.policy.ts`
 and `lms.validation.ts` are pure functions/schemas with no database
@@ -22,40 +27,58 @@ own pattern (a `content_manager` user).
 
 ### What the unit suite covers
 
-`course-lifecycle.policy.ts`: every listed transition is allowed,
-representative invalid transitions are rejected (`DRAFT → PUBLISHED`,
-`ARCHIVED → PUBLISHED`), publish-readiness field-by-field rejection
-(parametrized `it.each` over all 6 required fields), the
-seoTitle/seoDescription-NOT-required fallback behavior,
-publishAt/expireAt ordering, the module-count gate, and the read-time
-visibility window (status/publishAt/expireAt/visibility combinations).
+`course-lifecycle.policy.ts`: every listed FR-015/FR-100-aligned
+transition is allowed, representative invalid transitions are rejected
+(`DRAFT → PUBLISHED`, `SUBMITTED_FOR_REVIEW → PUBLISHED`), the full
+happy-path chain, the `CHANGES_REQUESTED` resubmission loop, `RETIRED`'s
+true-terminal-state property, publish-readiness field-by-field rejection
+(parametrized `it.each` over all 6 required fields, now checked at
+`SUBMITTED_FOR_REVIEW → APPROVED`), the
+seoTitle/seoDescription-NOT-required fallback behavior, publishAt/
+expireAt ordering, the module-count gate, and BOTH visibility
+predicates: `isCoursePubliclyVisible()` (the listing rule — excludes
+`UNLISTED`) and `isCourseVisibleByDirectLink()` (the detail rule —
+includes it), including the `SCHEDULED`-becomes-visible-at-its-publishAt
+behavior.
 
 `lms.validation.ts`: slug format, the FREE-price-must-be-zero rule (both
 directions), negative-price rejection, publishAt/expireAt and
 enrollmentStartAt/enrollmentEndAt ordering, metadata size bound, empty-
 update-body rejection, invalid UUID param rejection, category
-null-parentId-on-update acceptance, and the sort-value whitelist
-(including a literal SQL-injection-shaped string as a non-whitelisted
-value, asserting it's rejected rather than merely "not exploitable").
+null-parentId-on-update acceptance, the sort-value whitelist (including
+a literal SQL-injection-shaped string as a non-whitelisted value), every
+`COURSE_STATUS_VALUES` entry accepted, the OLD generic-prompt-era values
+(`REVIEW`/`UNPUBLISHED`) explicitly asserted REJECTED (a regression
+guard against reintroducing them), the required-`reviewNote`-on-
+`CHANGES_REQUESTED` rule, and module `releaseRuleType`/
+`prerequisiteModuleId` acceptance/rejection.
 
 ### What the integration suite covers
 
 Category creation + duplicate-slug rejection, parent/child hierarchy +
-cycle-prevention rejection, category archive (excluded from public list,
-still admin-fetchable — not hard-deleted). Course creation +
-duplicate-slug rejection, invalid-transition rejection, publish
-rejection with zero modules then success once one exists, draft
-never-leaked via public detail/listing, published course's public
-response has zero internal-field leakage (explicit key-absence
-assertions). Module creation with stable ordering, transactional
-reorder, cross-course reorder rejection, archive-without-hard-delete.
-Instructor duplicate-assignment rejection, at-most-one-primary
+cycle-prevention rejection, **the 2-level depth cap rejecting a 3rd
+hierarchy level**, category archive (excluded from public list, still
+admin-fetchable — not hard-deleted). Course creation + duplicate-slug
+rejection, invalid-transition rejection, the required-review-note rule
+(including that resubmission clears a stale note), publish rejection
+with zero modules then success once one exists (now asserted at the
+`APPROVED` transition, with `reviewedBy`/`publishedBy` populated),
+**`RETIRED`'s true-terminal-state property**, draft never-leaked via
+public detail/listing, **`UNLISTED` reachable by direct slug but never
+listed**, published course's public response has zero internal-field
+leakage (explicit key-absence assertions including the new
+`reviewNotes`/`reviewedBy`/`publishedBy` fields). Module creation with
+stable ordering, transactional reorder, cross-course reorder rejection,
+**cross-course prerequisite rejection, prerequisite cycle rejection,
+reorder-violates-prerequisite-order rejection**, archive-without-hard-
+delete. Instructor duplicate-assignment rejection, at-most-one-primary
 enforcement, last-instructor-removal rejection, IDOR prevention
 (instructor B denied on instructor A's course, instructor A succeeds),
-permission-escalation prevention (instructor cannot publish via the
-admin route directly). Discovery pagination/category-filter/search with
-exact `meta.totalItems`/`totalPages` assertions, and sort-whitelist
-rejection at the HTTP layer.
+permission-escalation prevention (instructor can submit their own course
+for review but is denied approving/publishing/archiving it — the
+corrected, finer-grained tier check). Discovery pagination/category-
+filter/search with exact `meta.totalItems`/`totalPages` assertions, and
+sort-whitelist rejection at the HTTP layer.
 
 ## Frontend test inventory (Part 1 — new)
 

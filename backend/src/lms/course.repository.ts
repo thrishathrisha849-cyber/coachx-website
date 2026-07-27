@@ -41,11 +41,18 @@ export interface PublicCourseFilter {
 // have dropped the visibility window whenever `q` was also supplied,
 // exactly the kind of draft/expired-content leak this phase's Security
 // Audit explicitly checks for).
+//
+// CORRECTION (spec-alignment pass): status list now matches
+// `course-lifecycle.policy.ts`'s `isCoursePubliclyVisible()` LISTING rule
+// exactly — PUBLISHED, SCHEDULED (visible once its publishAt window opens,
+// see that function's doc comment), and ENROLLMENT_PAUSED. `UNLISTED` is
+// deliberately EXCLUDED here (FR-015: reachable only by direct link/slug,
+// never listed/searched) — see `findCourseVisibleBySlug` below for the
+// separate, detail-only predicate that DOES allow it.
 function publicCourseWhere(filter: PublicCourseFilter): Prisma.CourseWhereInput {
   const now = new Date();
   const and: Prisma.CourseWhereInput[] = [
-    { status: 'PUBLISHED' },
-    { visibility: { in: ['PUBLIC', 'UNLISTED'] } },
+    { status: { in: ['PUBLISHED', 'SCHEDULED', 'ENROLLMENT_PAUSED'] } },
     { OR: [{ publishAt: null }, { publishAt: { lte: now } }] },
     { OR: [{ expireAt: null }, { expireAt: { gt: now } }] },
   ];

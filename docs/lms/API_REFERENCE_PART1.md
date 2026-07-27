@@ -7,6 +7,17 @@ platform-wide envelope (`@coachx/shared`'s `ApiSuccessResponse`/
 `docs/public-site/API_REFERENCE.md`'s "Response envelope" section for
 the exact shape (not repeated here).
 
+**CORRECTION (spec-alignment pass):** the `status` value set below was
+rewritten from a generic prompt-supplied list to 004/spec.md's actual
+FR-015/FR-100 states, and the `visibility` field/query param was removed
+entirely (folded into `status` — see `docs/lms/COURSE_LIFECYCLE.md` and
+`docs/lms/DATA_MODEL.md`). Course/module create/update bodies also gained
+the FR-014/FR-016 fields (`learningOutcomes`, `tags`, `targetAudience`,
+`toolsRequired`, `weeklyCommitmentMinutes`, `certificateAvailable` on
+Course; `outcome`, `estimatedDurationMinutes`, `isMandatory`,
+`prerequisiteModuleId`, `releaseRuleType`/`releaseRuleValue`,
+`completionRuleType` on Module) that the original implementation omitted.
+
 ## Endpoint-naming note (brief vs. actual)
 
 The Phase 6 brief's own example paths use `/api/admin/lms/...`,
@@ -60,7 +71,7 @@ public reads (reused middleware — see `docs/lms/ARCHITECTURE.md`).
 | GET | `/api/v1/lms/admin/courses` | `course.view` — `?q=&status=&categoryId=&instructorId=&sort=&page=&pageSize=` |
 | GET | `/api/v1/lms/admin/courses/:id` | `course.view` |
 | PATCH | `/api/v1/lms/admin/courses/:id` | `course.update` |
-| POST | `/api/v1/lms/admin/courses/:id/status` | `course.update` baseline; `course.publish` additionally required for `PUBLISHED`/`SCHEDULED` (see `docs/lms/RBAC.md`) |
+| POST | `/api/v1/lms/admin/courses/:id/status` | `course.update` baseline; `course.publish` additionally required for `CHANGES_REQUESTED`/`APPROVED`/`SCHEDULED`/`PUBLISHED`; `course.archive` additionally required for `UNLISTED`/`ENROLLMENT_PAUSED`/`ARCHIVED`/`RETIRED` (**CORRECTED** — see `docs/lms/RBAC.md`). Body: `{ status, reviewNote? }` — `reviewNote` is REQUIRED when `status: 'CHANGES_REQUESTED'`. |
 | POST | `/api/v1/lms/admin/courses/:id/archive` | `course.archive` |
 | POST | `/api/v1/lms/admin/courses/:id/restore` | `course.archive` |
 

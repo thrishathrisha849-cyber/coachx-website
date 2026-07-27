@@ -30,18 +30,27 @@ deny-by-default RBAC engine, and `buildSuccessResponse`/
 
 `004/spec.md`'s FR-001 describes a much deeper content hierarchy
 (**Learning Path → Program → Course → Module → Lesson → Learning
-Activity → Assessment → Outcome**) and a 12-state course lifecycle
-(FR-015: Draft/Content creation/Internal review/Instructor
-review/QA review/Approved/Scheduled/Published/Unlisted/Enrollment
-paused/Archived/Retired). The Phase 6 brief itself explicitly scopes
-Part 1 to **Category → Course → Module** only (no Learning Path,
-Program, Cohort, Lesson, or Assessment) and explicitly suggests a
-smaller 7-state course lifecycle (DRAFT/REVIEW/APPROVED/SCHEDULED/
-PUBLISHED/UNPUBLISHED/ARCHIVED), which is what was implemented — the
-brief's own scope instructions are the authoritative source for "what
-counts as Part 1," not `spec.md`'s full, later-phase-inclusive FR list.
-This is a deliberate, documented simplification, not a silent gap — see
-`docs/lms/DECISION_GATES.md`.
+Activity → Assessment → Outcome**). The implementation-driving brief
+explicitly scoped Part 1 to **Category → Course → Module** only (no
+Learning Path, Program, Cohort, Lesson, or Assessment) — this narrowing
+is a deliberate, documented simplification, not a silent gap.
+
+**CORRECTION (spec-alignment pass, superseding the paragraph above as
+originally written):** the Course status lifecycle was ORIGINALLY built
+from a generic, prompt-supplied 7-state list
+(`DRAFT/REVIEW/APPROVED/SCHEDULED/PUBLISHED/UNPUBLISHED/ARCHIVED`) that
+had no basis in `004/spec.md` at all — `REVIEW` and `UNPUBLISHED` do not
+appear anywhere in the spec. A dedicated specification-alignment audit
+caught this and it was corrected to the actual FR-015 (12 editorial
+statuses with defined per-status access behavior) reconciled against
+FR-100 (the 6-state Author/Reviewer/Compliance-reviewer/Publisher
+review workflow) — see `docs/lms/COURSE_LIFECYCLE.md` for the full
+reconciliation and `docs/lms/DECISION_GATES.md` gate #17 for the
+before/after record. This is the corrected discipline going forward:
+scope-narrowing (which FRs to build) is a legitimate, documented brief
+decision; INVENTING field/state values a brief merely suggests without
+grounding them in the actual spec text is not — every enum value and
+field in this module must now trace to a specific FR.
 
 ## Layer overview
 

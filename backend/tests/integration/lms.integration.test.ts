@@ -1,11 +1,20 @@
 /**
  * Real-database integration tests for Phase 6 Part 1's LMS foundation:
- * categories (hierarchy/cycle prevention), courses (lifecycle, publish
- * validation), modules (ordering/reorder), instructor assignment
- * (primary-instructor rule, ownership/IDOR), discovery (pagination,
- * filtering, sorting, search, draft isolation), and security
- * (permission escalation, cross-course reorder rejection, no internal-
- * field leakage).
+ * categories (hierarchy/cycle/depth-cap prevention), courses (FR-015/
+ * FR-100-aligned lifecycle, publish validation), modules (ordering/
+ * reorder/prerequisites), instructor assignment (primary-instructor rule,
+ * ownership/IDOR), discovery (pagination, filtering, sorting, search,
+ * draft/unlisted isolation), and security (permission escalation,
+ * cross-course reorder rejection, no internal-field leakage).
+ *
+ * CORRECTION (spec-alignment pass): status values throughout rewritten
+ * from the generic `REVIEW`/`UNPUBLISHED` set to the FR-015/FR-100-aligned
+ * set (`SUBMITTED_FOR_REVIEW`/`CHANGES_REQUESTED`/etc.) — see
+ * docs/lms/COURSE_LIFECYCLE.md. New test blocks added for the
+ * correction-specific behaviors: category depth cap, module prerequisite
+ * cycle/cross-course rejection, reorder-prerequisite-order rejection,
+ * required review note, RETIRED terminal state, UNLISTED direct-link
+ * visibility.
  *
  * Same graceful-skip pattern as `cms.integration.test.ts` /
  * `auth.integration.test.ts` — see docs/lms/TESTING.md.
@@ -176,7 +185,23 @@ async function createDraftCourse(instructor: { userId: string; accessToken: stri
   return courseId;
 }
 
-describe('Course categories (hierarchy, cycle prevention)', () => {
+/** Drives a course all the way to PUBLISHED via the corrected FR-100 workflow, creating one module along the way. */
+async function publishCourse(courseId: string) {
+  await request(app)
+    .post(`/api/v1/lms/admin/courses/${courseId}/modules`)
+    .set('Authorization', `Bearer ${admin.accessToken}`)
+    .send({ title: 'Module 1' });
+
+  for (const status of ['SUBMITTED_FOR_REVIEW', 'APPROVED', 'PUBLISHED']) {
+    const res = await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/status`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ status });
+    expect(res.status).toBe(200);
+  }
+}
+
+describe('Course categories (hierarchy, cycle prevention, depth cap)', () => {
   it('creates a category and rejects a duplicate slug', async () => {
     if (skip()) return;
     await ensureFixtures();
@@ -221,6 +246,30 @@ describe('Course categories (hierarchy, cycle prevention)', () => {
     expect(cycleAttempt.status).toBe(409);
   });
 
+  it('rejects creating a 3rd hierarchy level (subcategory of a subcategory) — 004 FR-014 is a 2-level category/subcategory model', async () => {
+    if (skip()) return;
+    await ensureFixtures();
+
+    const rootRes = await request(app)
+      .post('/api/v1/lms/admin/categories')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ name: 'Root', slug: uniqueSlug('depth-root') });
+    const rootId = rootRes.body.data.id;
+
+    const subRes = await request(app)
+      .post('/api/v1/lms/admin/categories')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ name: 'Sub', slug: uniqueSlug('depth-sub'), parentId: rootId });
+    expect(subRes.status).toBe(201);
+    const subId = subRes.body.data.id;
+
+    const subSubAttempt = await request(app)
+      .post('/api/v1/lms/admin/categories')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ name: 'Sub Sub', slug: uniqueSlug('depth-subsub'), parentId: subId });
+    expect(subSubAttempt.status).toBe(400);
+  });
+
   it('archives a category without hard-deleting it, and it disappears from the public list', async () => {
     if (skip()) return;
     await ensureFixtures();
@@ -248,7 +297,7 @@ describe('Course categories (hierarchy, cycle prevention)', () => {
   });
 });
 
-describe('Courses (creation, unique slug, publish validation, lifecycle)', () => {
+describe('Courses (creation, unique slug, publish validation, FR-015/FR-100 lifecycle)', () => {
   it('creates a course and rejects a duplicate slug', async () => {
     if (skip()) return;
     await ensureFixtures();
@@ -280,23 +329,55 @@ describe('Courses (creation, unique slug, publish validation, lifecycle)', () =>
     expect(res.status).toBe(400);
   });
 
+  it('requires a reviewNote when requesting changes, and the note is visible to the instructor', async () => {
+    if (skip()) return;
+    await ensureFixtures();
+    const courseId = await createDraftCourse(instructorA);
+    await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/modules`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ title: 'Module 1' });
+    await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/status`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ status: 'SUBMITTED_FOR_REVIEW' });
+
+    const missingNote = await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/status`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ status: 'CHANGES_REQUESTED' });
+    expect(missingNote.status).toBe(400);
+
+    const withNote = await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/status`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ status: 'CHANGES_REQUESTED', reviewNote: 'Please add a trailer video.' });
+    expect(withNote.status).toBe(200);
+    expect(withNote.body.data.reviewNotes).toBe('Please add a trailer video.');
+
+    // Resubmitting clears the stale review note.
+    const resubmit = await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/status`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ status: 'SUBMITTED_FOR_REVIEW' });
+    expect(resubmit.body.data.reviewNotes).toBeNull();
+  });
+
   it('rejects publishing a course with no modules, then allows it once a module exists', async () => {
     if (skip()) return;
     await ensureFixtures();
     const courseId = await createDraftCourse(instructorA);
 
-    for (const status of ['REVIEW', 'APPROVED']) {
-      const res = await request(app)
-        .post(`/api/v1/lms/admin/courses/${courseId}/status`)
-        .set('Authorization', `Bearer ${admin.accessToken}`)
-        .send({ status });
-      expect(res.status).toBe(200);
-    }
+    const submitRes = await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/status`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ status: 'SUBMITTED_FOR_REVIEW' });
+    expect(submitRes.status).toBe(200);
 
     const noModuleAttempt = await request(app)
       .post(`/api/v1/lms/admin/courses/${courseId}/status`)
       .set('Authorization', `Bearer ${admin.accessToken}`)
-      .send({ status: 'PUBLISHED' });
+      .send({ status: 'APPROVED' });
     expect(noModuleAttempt.status).toBe(400);
     expect(noModuleAttempt.body.error.message).toMatch(/at least one module/i);
 
@@ -305,6 +386,13 @@ describe('Courses (creation, unique slug, publish validation, lifecycle)', () =>
       .set('Authorization', `Bearer ${admin.accessToken}`)
       .send({ title: 'Module 1' });
 
+    const approveRes = await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/status`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ status: 'APPROVED' });
+    expect(approveRes.status).toBe(200);
+    expect(approveRes.body.data.reviewedBy).toBe(admin.userId);
+
     const publishRes = await request(app)
       .post(`/api/v1/lms/admin/courses/${courseId}/status`)
       .set('Authorization', `Bearer ${admin.accessToken}`)
@@ -312,6 +400,31 @@ describe('Courses (creation, unique slug, publish validation, lifecycle)', () =>
     expect(publishRes.status).toBe(200);
     expect(publishRes.body.data.status).toBe('PUBLISHED');
     expect(publishRes.body.data.publishedAt).not.toBeNull();
+    expect(publishRes.body.data.publishedBy).toBe(admin.userId);
+  });
+
+  it('RETIRED is a true terminal state — no transition out is permitted', async () => {
+    if (skip()) return;
+    await ensureFixtures();
+    const courseId = await createDraftCourse(instructorA);
+    await publishCourse(courseId);
+
+    await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/status`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ status: 'ARCHIVED' });
+
+    const retireRes = await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/status`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ status: 'RETIRED' });
+    expect(retireRes.status).toBe(200);
+
+    const escapeAttempt = await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/status`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ status: 'DRAFT' });
+    expect(escapeAttempt.status).toBe(400);
   });
 
   it('never leaks a DRAFT course via the public detail or listing endpoints', async () => {
@@ -330,20 +443,33 @@ describe('Courses (creation, unique slug, publish validation, lifecycle)', () =>
     expect(listing.body.data.find((c: any) => c.slug === slug)).toBeUndefined();
   });
 
+  it('UNLISTED courses are reachable by direct slug but never appear in the public listing (FR-015)', async () => {
+    if (skip()) return;
+    await ensureFixtures();
+    const courseId = await createDraftCourse(instructorA);
+    await publishCourse(courseId);
+    await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/status`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ status: 'UNLISTED' });
+
+    const course = await request(app)
+      .get(`/api/v1/lms/admin/courses/${courseId}`)
+      .set('Authorization', `Bearer ${admin.accessToken}`);
+    const slug = course.body.data.slug;
+
+    const detail = await request(app).get(`/api/v1/lms/courses/${slug}`);
+    expect(detail.status).toBe(200);
+
+    const listing = await request(app).get('/api/v1/lms/courses');
+    expect(listing.body.data.find((c: any) => c.slug === slug)).toBeUndefined();
+  });
+
   it('exposes a published course publicly with no internal-field leakage', async () => {
     if (skip()) return;
     await ensureFixtures();
     const courseId = await createDraftCourse(instructorA);
-    await request(app)
-      .post(`/api/v1/lms/admin/courses/${courseId}/modules`)
-      .set('Authorization', `Bearer ${admin.accessToken}`)
-      .send({ title: 'Module 1' });
-    for (const status of ['REVIEW', 'APPROVED', 'PUBLISHED']) {
-      await request(app)
-        .post(`/api/v1/lms/admin/courses/${courseId}/status`)
-        .set('Authorization', `Bearer ${admin.accessToken}`)
-        .send({ status });
-    }
+    await publishCourse(courseId);
     const course = await request(app)
       .get(`/api/v1/lms/admin/courses/${courseId}`)
       .set('Authorization', `Bearer ${admin.accessToken}`);
@@ -353,6 +479,9 @@ describe('Courses (creation, unique slug, publish validation, lifecycle)', () =>
     expect(detail.status).toBe(200);
     expect(detail.body.data).not.toHaveProperty('createdBy');
     expect(detail.body.data).not.toHaveProperty('updatedBy');
+    expect(detail.body.data).not.toHaveProperty('reviewedBy');
+    expect(detail.body.data).not.toHaveProperty('publishedBy');
+    expect(detail.body.data).not.toHaveProperty('reviewNotes');
     expect(detail.body.data).not.toHaveProperty('metadata');
     expect(detail.body.data).not.toHaveProperty('version');
     expect(detail.body.data).not.toHaveProperty('status');
@@ -360,7 +489,7 @@ describe('Courses (creation, unique slug, publish validation, lifecycle)', () =>
   });
 });
 
-describe('Course modules (ordering, transactional reorder)', () => {
+describe('Course modules (ordering, transactional reorder, prerequisites)', () => {
   it('creates modules with stable ordering and reorders them transactionally', async () => {
     if (skip()) return;
     await ensureFixtures();
@@ -411,6 +540,72 @@ describe('Course modules (ordering, transactional reorder)', () => {
       .post(`/api/v1/lms/admin/courses/${courseId1}/modules/reorder`)
       .set('Authorization', `Bearer ${admin.accessToken}`)
       .send({ orderedIds: [m1.body.data.id, m2.body.data.id] });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a cross-course prerequisite reference', async () => {
+    if (skip()) return;
+    await ensureFixtures();
+    const courseId1 = await createDraftCourse(instructorA);
+    const courseId2 = await createDraftCourse(instructorA);
+
+    const m1 = await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId1}/modules`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ title: 'Course 1 Module' });
+
+    const res = await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId2}/modules`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ title: 'Course 2 Module', prerequisiteModuleId: m1.body.data.id });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a module prerequisite cycle', async () => {
+    if (skip()) return;
+    await ensureFixtures();
+    const courseId = await createDraftCourse(instructorA);
+
+    const m1 = await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/modules`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ title: 'Module A' });
+    const m2 = await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/modules`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ title: 'Module B', prerequisiteModuleId: m1.body.data.id });
+    expect(m2.status).toBe(201);
+
+    // Attempt to make Module A depend on Module B — A already precedes B,
+    // so this is also rejected by the "prerequisite must be earlier"
+    // ordering rule, which is itself sufficient to prevent this exact cycle.
+    const cycleAttempt = await request(app)
+      .patch(`/api/v1/lms/admin/modules/${m1.body.data.id}`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ prerequisiteModuleId: m2.body.data.id });
+    expect(cycleAttempt.status).toBe(400);
+  });
+
+  it('rejects a reorder that would place a module at or before its own prerequisite', async () => {
+    if (skip()) return;
+    await ensureFixtures();
+    const courseId = await createDraftCourse(instructorA);
+
+    const m1 = await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/modules`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ title: 'Module A' });
+    const m2 = await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/modules`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ title: 'Module B', prerequisiteModuleId: m1.body.data.id });
+
+    // Reordering B before A would place the dependent module before its
+    // own prerequisite — rejected.
+    const res = await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/modules/reorder`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ orderedIds: [m2.body.data.id, m1.body.data.id] });
     expect(res.status).toBe(400);
   });
 
@@ -501,7 +696,7 @@ describe('Instructor assignment (primary rule, duplicate rejection, ownership/ID
     expect(ownerRead.status).toBe(200);
   });
 
-  it('permission escalation prevention: an instructor cannot publish their own course', async () => {
+  it('permission escalation prevention: an instructor cannot review/approve/publish their own course, nor change its archival state', async () => {
     if (skip()) return;
     await ensureFixtures();
     const courseId = await createDraftCourse(instructorA);
@@ -509,21 +704,41 @@ describe('Instructor assignment (primary rule, duplicate rejection, ownership/ID
       .post(`/api/v1/lms/admin/courses/${courseId}/modules`)
       .set('Authorization', `Bearer ${admin.accessToken}`)
       .send({ title: 'A Module' });
-    for (const status of ['REVIEW', 'APPROVED']) {
-      await request(app)
-        .post(`/api/v1/lms/admin/courses/${courseId}/status`)
-        .set('Authorization', `Bearer ${admin.accessToken}`)
-        .send({ status });
-    }
 
-    // instructorA holds course.update but NOT course.publish — attempting
-    // the admin status route directly (not the instructor route, which
-    // doesn't even expose a status endpoint) must still be denied.
-    const res = await request(app)
+    // instructorA holds course.update but NOT course.publish/course.archive.
+    const submitAsInstructor = await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/status`)
+      .set('Authorization', `Bearer ${instructorA.accessToken}`)
+      .send({ status: 'SUBMITTED_FOR_REVIEW' });
+    expect(submitAsInstructor.status).toBe(200); // instructor CAN submit their own work
+
+    const approveAsInstructor = await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/status`)
+      .set('Authorization', `Bearer ${instructorA.accessToken}`)
+      .send({ status: 'APPROVED' });
+    expect(approveAsInstructor.status).toBe(403);
+
+    await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/status`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ status: 'APPROVED' });
+
+    const publishAsInstructor = await request(app)
       .post(`/api/v1/lms/admin/courses/${courseId}/status`)
       .set('Authorization', `Bearer ${instructorA.accessToken}`)
       .send({ status: 'PUBLISHED' });
-    expect(res.status).toBe(403);
+    expect(publishAsInstructor.status).toBe(403);
+
+    await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/status`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ status: 'PUBLISHED' });
+
+    const archiveAsInstructor = await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/status`)
+      .set('Authorization', `Bearer ${instructorA.accessToken}`)
+      .send({ status: 'ARCHIVED' });
+    expect(archiveAsInstructor.status).toBe(403);
   });
 });
 
@@ -539,16 +754,7 @@ describe('Course discovery (pagination, filtering, sorting, search)', () => {
         .patch(`/api/v1/lms/admin/courses/${courseId}`)
         .set('Authorization', `Bearer ${admin.accessToken}`)
         .send({ title: `${slugPrefix}-course-${i}` });
-      await request(app)
-        .post(`/api/v1/lms/admin/courses/${courseId}/modules`)
-        .set('Authorization', `Bearer ${admin.accessToken}`)
-        .send({ title: 'Module' });
-      for (const status of ['REVIEW', 'APPROVED', 'PUBLISHED']) {
-        await request(app)
-          .post(`/api/v1/lms/admin/courses/${courseId}/status`)
-          .set('Authorization', `Bearer ${admin.accessToken}`)
-          .send({ status });
-      }
+      await publishCourse(courseId);
     }
 
     const searchRes = await request(app).get(`/api/v1/lms/courses?q=${slugPrefix}&pageSize=2&page=1`);

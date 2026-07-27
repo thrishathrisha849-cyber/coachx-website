@@ -1065,12 +1065,18 @@ enum CategoryStatus {
 }
 
 // ----------------------------------------------------------------------------
-// Course — the primary LMS authoring entity (004 FR "Course Engine").
-// Publish lifecycle mirrors the CMS Page model's DRAFT→…→PUBLISHED shape
-// (docs/public-site/CMS_MODEL.md) with two LMS-specific additions,
-// UNPUBLISHED (a published course pulled back without losing its DRAFT-vs-
-// was-live distinction) and the same read-time publish/expire-window
-// visibility check Page and Announcement already use — no scheduled worker.
+// Course — the primary LMS authoring entity (004 FR-014).
+//
+// Phase 6 Part 1 CORRECTION (spec-alignment pass): the status enum and
+// field set below were rebuilt directly from 004/spec.md FR-014/FR-015/
+// FR-100 — see docs/lms/COURSE_LIFECYCLE.md for the full reconciliation of
+// FR-015's 12 editorial statuses against FR-100's 6-state review workflow,
+// and docs/lms/DECISION_GATES.md for why `UNPUBLISHED` (a generic-prompt
+// invention with no basis in FR-015 or FR-100) was removed, and why the
+// separate `CourseVisibility` enum was removed (FR-015 already models
+// "Unlisted" as a `status` value, not a second dimension — keeping both
+// would have been exactly the duplicate-canonical-shape problem this
+// project's own cross-feature audits repeatedly flag elsewhere).
 // ----------------------------------------------------------------------------
 model Course {
   id String @id @default(uuid()) @db.Uuid
@@ -1087,6 +1093,22 @@ model Course {
   /// docs/lms/SECURITY.md.
   description String? @db.Text
 
+  /// FR-014 "learning outcomes" — action-based outcome statements (e.g.
+  /// "create a 30-day content plan"), plural and structured as a scalar
+  /// array (same pattern as `tags` below), not a separate join table —
+  /// no second content type needs to share this vocabulary.
+  learningOutcomes String[] @map("learning_outcomes")
+
+  /// FR-014 "tags" — same lightweight, page-owned scalar-array pattern
+  /// `Page.tags` already established (docs/public-site/CMS_MODEL.md §2).
+  tags String[]
+
+  /// FR-014 "target audience" / "tools required" — short descriptive
+  /// catalog copy, not structured/queryable data per the source PRD (no
+  /// FR describes filtering or matching logic against these fields).
+  targetAudience String?  @map("target_audience") @db.Text
+  toolsRequired  String[] @map("tools_required")
+
   thumbnailUrl  String? @map("thumbnail_url") @db.VarChar(500)
   coverImageUrl String? @map("cover_image_url") @db.VarChar(500)
   trailerUrl    String? @map("trailer_url") @db.VarChar(500)
@@ -1097,19 +1119,29 @@ model Course {
   language PageLanguage @default(EN)
   level    CourseLevel  @default(ALL_LEVELS)
 
-  status     CourseStatus     @default(DRAFT)
-  visibility CourseVisibility @default(PUBLIC)
+  status CourseStatus @default(DRAFT)
 
   categoryId String?         @map("category_id") @db.Uuid
   category   CourseCategory? @relation(fields: [categoryId], references: [id], onDelete: Restrict)
 
   durationMinutes            Int? @map("duration_minutes")
   estimatedCompletionMinutes Int? @map("estimated_completion_minutes")
+  weeklyCommitmentMinutes    Int? @map("weekly_commitment_minutes")
+
+  /// FR-014 "certificate availability" — a catalog-level flag ("will this
+  /// course offer a certificate") only. Certificate TEMPLATE/ISSUANCE/
+  /// VERIFICATION (FR-080–FR-086) is explicitly Phase 6 Part 3 — this flag
+  /// exists so Part 1's course-builder metadata is complete without
+  /// building any certificate mechanics.
+  certificateAvailable Boolean @default(false) @map("certificate_available")
 
   priceType        CoursePriceType @default(FREE) @map("price_type")
   /// Money-safe integer minor-unit storage (e.g. paise for INR) — NEVER a
-  /// float. No payment processing is implemented here; this is metadata
-  /// only, read by a future 009-membership-payments feature.
+  /// float. No payment processing is implemented here; this is catalog-
+  /// level metadata only (004/spec.md Assumptions: Volume 09 is system of
+  /// record for payment/membership state), read by a future
+  /// 009-membership-payments feature. No entitlement/access-grant
+  /// mechanics (FR-021–FR-033) are implemented here — that is Part 2.
   priceAmountMinor Int             @default(0) @map("price_amount_minor")
   currency         String          @default("INR") @db.VarChar(3)
 
@@ -1128,6 +1160,24 @@ model Course {
   seoDescription String? @map("seo_description") @db.VarChar(500)
   canonicalUrl   String? @map("canonical_url") @db.VarChar(500)
 
+  /// FR-100 "Changes requested" reviewer feedback — free text explaining
+  /// what must change before resubmission. Cleared on every resubmission
+  /// (DRAFT/SUBMITTED_FOR_REVIEW re-entry), never accumulated as history
+  /// (full history lives in AuditEvent's beforeState/afterState instead).
+  reviewNotes String? @map("review_notes") @db.Text
+
+  /// FR-014 "rating", "review count", "learner count" — nullable/zero-
+  /// defaulted PLACEHOLDER aggregate fields. NEVER written to by Part 1
+  /// code (no Review/Enrollment model exists to compute them from) —
+  /// present only so the Course entity's field set is complete per
+  /// FR-014 and so Part 2 (learnerCount, from Enrollment) / Part 3
+  /// (ratingAverage/ratingCount, from Course Review) have a column to
+  /// populate rather than needing a later migration. Never fabricated;
+  /// see docs/lms/DECISION_GATES.md.
+  ratingAverage Float? @map("rating_average")
+  ratingCount   Int    @default(0) @map("rating_count")
+  learnerCount  Int    @default(0) @map("learner_count")
+
   metadata Json?
 
   /// Optimistic-concurrency guard for the admin/instructor edit surface —
@@ -1137,8 +1187,15 @@ model Course {
   /// exists yet) — see docs/lms/DECISION_GATES.md.
   version Int @default(1)
 
-  createdBy String? @map("created_by") @db.Uuid
-  updatedBy String? @map("updated_by") @db.Uuid
+  /// FR-014 "created-by, reviewed-by, published-by" — three distinct
+  /// actor references, matching FR-100's Author/Reviewer/Publisher role
+  /// separation at the DATA level (RBAC still gates who may occupy each
+  /// role via the existing `course.*` permissions — see docs/lms/RBAC.md
+  /// for why this does not introduce 4 new granular roles).
+  createdBy   String? @map("created_by") @db.Uuid
+  updatedBy   String? @map("updated_by") @db.Uuid
+  reviewedBy  String? @map("reviewed_by") @db.Uuid
+  publishedBy String? @map("published_by") @db.Uuid
 
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -1148,34 +1205,57 @@ model Course {
   modules     CourseModule[]
   instructors CourseInstructor[]
 
-  @@index([status, visibility])
+  @@index([status])
   @@index([categoryId])
   @@index([status, publishAt])
   @@index([isFeatured])
   @@map("courses")
 }
 
+/// FR-015's 12 editorial statuses reconciled with FR-100's 6-state review
+/// workflow (see docs/lms/COURSE_LIFECYCLE.md for the full mapping):
+/// FR-100 supplies the enforced WORKFLOW transitions (Draft → Submitted
+/// for review → Changes requested → Approved → Scheduled → Published);
+/// FR-015 supplies the additional TERMINAL/OPERATIONAL states with their
+/// own explicitly-defined per-status access behavior (Unlisted,
+/// Enrollment paused, Archived, Retired) that FR-100's narrower workflow
+/// view doesn't mention but the SAME feature's own FR-014 field list
+/// ("publication status") clearly intends as the same field. FR-015's
+/// four editorial sub-review-stage names (Content creation / Internal
+/// review / Instructor review / QA review) are treated as PROCESS
+/// GUIDANCE within the single `SUBMITTED_FOR_REVIEW` state rather than 4
+/// separate enum values — FR-100 (the more implementation-ready of the
+/// two FRs, with explicit role/audit requirements) does not name them as
+/// distinct states either.
 enum CourseStatus {
   DRAFT
-  REVIEW
+  SUBMITTED_FOR_REVIEW
+  CHANGES_REQUESTED
   APPROVED
   SCHEDULED
   PUBLISHED
-  UNPUBLISHED
+  /// FR-015: "accessible only via direct link or explicit assignment" —
+  /// reachable by slug, excluded from public listing/search/sitemap.
+  UNLISTED
+  /// FR-015: course remains visible/informational but is not accepting
+  /// new enrollment (no Enrollment model exists yet in Part 1 to actually
+  /// enforce an enrollment block — this is the catalog-level status flag
+  /// FR-014/FR-015 describe; Part 2's Enrollment service is what will
+  /// actually consult it).
+  ENROLLMENT_PAUSED
+  /// FR-015: "preserves existing learner progress while blocking new
+  /// enrollment." Part 1 has no learner/progress concept yet, so Archived
+  /// courses are hidden from ALL public routes for now (a documented,
+  /// intentional Part 1 simplification — see docs/lms/DECISION_GATES.md);
+  /// once Part 2's Enrollment exists, Archived detail access can be
+  /// scoped to already-enrolled learners specifically.
   ARCHIVED
+  /// FR-015: "marks the course replaced or permanently unavailable" — a
+  /// true terminal state (see course-lifecycle.policy.ts; no transition
+  /// out of RETIRED is permitted).
+  RETIRED
 
   @@map("course_status")
-}
-
-/// PRIVATE (enrollment-gated visibility) is deliberately NOT modeled yet —
-/// it would need Part 2's Enrollment model to mean anything ("private to
-/// whom"); see docs/lms/DECISION_GATES.md. UNLISTED = publicly reachable by
-/// direct link/slug but excluded from discovery listings/search/sitemap.
-enum CourseVisibility {
-  PUBLIC
-  UNLISTED
-
-  @@map("course_visibility")
 }
 
 enum CourseLevel {
@@ -1195,11 +1275,19 @@ enum CoursePriceType {
 }
 
 // ----------------------------------------------------------------------------
-// CourseModule — ordered top-level content grouping within a Course.
-// Deliberately NO lesson/content model here (004 Part 2 owns Lesson) — a
-// module in Part 1 is a named, ordered "chapter" shell only. Archive, never
-// hard-delete: a future Lesson FK to CourseModule must never be silently
-// orphaned by this phase's own module lifecycle.
+// CourseModule — ordered top-level content grouping within a Course
+// (004 FR-016). Deliberately NO lesson/content model here (Part 2 owns
+// Lesson) — a module in Part 1 is a named, ordered "chapter" shell with
+// CONFIGURATION only. Archive, never hard-delete: a future Lesson FK to
+// CourseModule must never be silently orphaned by this phase's own module
+// lifecycle.
+//
+// Part 1 CORRECTION: `releaseRuleType`/`completionRuleType` below are
+// CONFIGURATION fields an instructor sets while authoring — Part 1 stores
+// the instructor's intent but does NOT evaluate or enforce it (no
+// Lesson/Enrollment/drip-release engine exists yet to act on it). No
+// public API path in Part 1 changes behavior based on these fields — see
+// docs/lms/COURSE_LIFECYCLE.md "Configuration vs. enforcement" section.
 // ----------------------------------------------------------------------------
 model CourseModule {
   id       String @id @default(uuid()) @db.Uuid
@@ -1208,12 +1296,52 @@ model CourseModule {
 
   title       String  @db.VarChar(200)
   description String? @db.Text
+  /// FR-016 "outcome" — a single learning-outcome statement for this module.
+  outcome     String? @db.Text
 
   /// Stable ordering within the course. Unique per (courseId, position) —
   /// reordering is a single transactional rewrite of every affected row's
   /// position (see module.service.ts's `reorderModules`), never a partial
   /// update that could leave two modules sharing a position.
   position Int
+
+  /// FR-016 "estimated duration" — module-level rollup estimate, entered
+  /// directly by the instructor in Part 1 (no Lesson durations exist yet
+  /// to sum).
+  estimatedDurationMinutes Int? @map("estimated_duration_minutes")
+
+  /// FR-016 "optional/mandatory status" — whether this module blocks
+  /// overall course completion once Part 2's completion engine exists.
+  isMandatory Boolean @default(true) @map("is_mandatory")
+
+  /// FR-016 "prerequisite module" — self-relation, same course only (a
+  /// cross-course prerequisite is explicitly rejected, see
+  /// module.service.ts). Nullable = no prerequisite. Cycle-prevented the
+  /// same way CourseCategory's parent hierarchy is (module.service.ts's
+  /// `assertNoModulePrerequisiteCycle`).
+  prerequisiteModuleId String?        @map("prerequisite_module_id") @db.Uuid
+  prerequisiteModule   CourseModule?  @relation("ModulePrerequisite", fields: [prerequisiteModuleId], references: [id], onDelete: SetNull)
+  dependentModules     CourseModule[] @relation("ModulePrerequisite")
+
+  /// FR-034 release-rule TYPE (config only — see model doc comment).
+  /// Values chosen from FR-034's list are the ones meaningful without a
+  /// Cohort entity (not built): IMMEDIATE, DAYS_AFTER_ENROLLMENT,
+  /// FIXED_DATE, AFTER_PREVIOUS_MODULE, INSTRUCTOR_RELEASE.
+  releaseRuleType  ModuleReleaseRuleType @default(IMMEDIATE) @map("release_rule_type")
+  /// The type-dependent value (e.g. `{"days": 7}` for
+  /// DAYS_AFTER_ENROLLMENT, `{"date": "2026-01-01T00:00:00Z"}` for
+  /// FIXED_DATE) — same "enum type + Json value" pattern
+  /// `backend/src/cms/block-schemas.ts` already established for
+  /// per-type-shaped configuration, not a free-form metadata substitute.
+  releaseRuleValue Json?                 @map("release_rule_value")
+
+  /// FR-052 completion-rule TYPE (config only). Only the two values that
+  /// are meaningful without Lesson/Quiz/Assignment data are modeled in
+  /// Part 1: MANUAL and INSTRUCTOR_APPROVAL. The remaining FR-052 types
+  /// (minimum watch, read threshold, quiz pass, assignment submit, etc.)
+  /// are meaningless before Part 2's Lesson model exists and are
+  /// deliberately NOT modeled here as placeholder enum values.
+  completionRuleType ModuleCompletionRuleType @default(MANUAL) @map("completion_rule_type")
 
   status    CourseModuleStatus @default(DRAFT)
   isPreview Boolean            @default(false) @map("is_preview")
@@ -1228,6 +1356,7 @@ model CourseModule {
 
   @@unique([courseId, position])
   @@index([courseId, status])
+  @@index([prerequisiteModuleId])
   @@map("course_modules")
 }
 
@@ -1237,6 +1366,23 @@ enum CourseModuleStatus {
   ARCHIVED
 
   @@map("course_module_status")
+}
+
+enum ModuleReleaseRuleType {
+  IMMEDIATE
+  DAYS_AFTER_ENROLLMENT
+  FIXED_DATE
+  AFTER_PREVIOUS_MODULE
+  INSTRUCTOR_RELEASE
+
+  @@map("module_release_rule_type")
+}
+
+enum ModuleCompletionRuleType {
+  MANUAL
+  INSTRUCTOR_APPROVAL
+
+  @@map("module_completion_rule_type")
 }
 
 // ----------------------------------------------------------------------------

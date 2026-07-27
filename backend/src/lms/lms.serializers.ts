@@ -86,10 +86,17 @@ type ModuleRow = {
   id: string;
   title: string;
   description: string | null;
+  outcome: string | null;
   position: number;
+  estimatedDurationMinutes: number | null;
+  isMandatory: boolean;
   isPreview: boolean;
   courseId: string;
   status: string;
+  prerequisiteModuleId: string | null;
+  releaseRuleType: string;
+  releaseRuleValue: unknown;
+  completionRuleType: string;
   metadata: unknown;
   createdBy: string | null;
   updatedBy: string | null;
@@ -102,7 +109,10 @@ export function toPublicModule(row: ModuleRow): PublicCourseModule {
     id: row.id,
     title: row.title,
     description: row.description,
+    outcome: row.outcome,
     position: row.position,
+    estimatedDurationMinutes: row.estimatedDurationMinutes,
+    isMandatory: row.isMandatory,
     isPreview: row.isPreview,
   };
 }
@@ -112,6 +122,10 @@ export function toAdminModule(row: ModuleRow): AdminCourseModule {
     ...toPublicModule(row),
     courseId: row.courseId,
     status: row.status,
+    prerequisiteModuleId: row.prerequisiteModuleId,
+    releaseRuleType: row.releaseRuleType,
+    releaseRuleValue: row.releaseRuleValue,
+    completionRuleType: row.completionRuleType,
     metadata: row.metadata,
     createdBy: row.createdBy,
     updatedBy: row.updatedBy,
@@ -127,21 +141,29 @@ type CourseRow = {
   subtitle: string | null;
   shortDescription: string | null;
   description: string | null;
+  learningOutcomes: string[];
+  tags: string[];
+  targetAudience: string | null;
+  toolsRequired: string[];
   thumbnailUrl: string | null;
   coverImageUrl: string | null;
   trailerUrl: string | null;
   language: string;
   level: string;
   status: string;
-  visibility: string;
   categoryId: string | null;
   category: CategoryRow | null;
   durationMinutes: number | null;
   estimatedCompletionMinutes: number | null;
+  weeklyCommitmentMinutes: number | null;
+  certificateAvailable: boolean;
   priceType: string;
   priceAmountMinor: number;
   currency: string;
   isFeatured: boolean;
+  ratingAverage: number | null;
+  ratingCount: number;
+  learnerCount: number;
   enrollmentLimit: number | null;
   enrollmentStartAt: Date | null;
   enrollmentEndAt: Date | null;
@@ -150,10 +172,13 @@ type CourseRow = {
   seoTitle: string | null;
   seoDescription: string | null;
   canonicalUrl: string | null;
+  reviewNotes: string | null;
   metadata: unknown;
   version: number;
   createdBy: string | null;
   updatedBy: string | null;
+  reviewedBy: string | null;
+  publishedBy: string | null;
   createdAt: Date;
   updatedAt: Date;
   publishedAt: Date | null;
@@ -169,6 +194,10 @@ export function toPublicCourse(row: CourseRow): PublicCourse {
     subtitle: row.subtitle,
     shortDescription: row.shortDescription,
     description: row.description,
+    learningOutcomes: row.learningOutcomes,
+    tags: row.tags,
+    targetAudience: row.targetAudience,
+    toolsRequired: row.toolsRequired,
     thumbnailUrl: row.thumbnailUrl,
     coverImageUrl: row.coverImageUrl,
     trailerUrl: row.trailerUrl,
@@ -177,10 +206,15 @@ export function toPublicCourse(row: CourseRow): PublicCourse {
     category: row.category ? toPublicCategory(row.category) : null,
     durationMinutes: row.durationMinutes,
     estimatedCompletionMinutes: row.estimatedCompletionMinutes,
+    weeklyCommitmentMinutes: row.weeklyCommitmentMinutes,
+    certificateAvailable: row.certificateAvailable,
     priceType: row.priceType,
     priceAmountMinor: row.priceAmountMinor,
     currency: row.currency,
     isFeatured: row.isFeatured,
+    ratingAverage: row.ratingAverage,
+    ratingCount: row.ratingCount,
+    learnerCount: row.learnerCount,
     instructors: row.instructors.map(toPublicInstructor),
     seo: {
       title: row.seoTitle ?? row.title,
@@ -210,25 +244,34 @@ export function toAdminCourse(row: CourseRow): AdminCourse {
     subtitle: row.subtitle,
     shortDescription: row.shortDescription,
     description: row.description,
+    learningOutcomes: row.learningOutcomes,
+    tags: row.tags,
+    targetAudience: row.targetAudience,
+    toolsRequired: row.toolsRequired,
     thumbnailUrl: row.thumbnailUrl,
     coverImageUrl: row.coverImageUrl,
     trailerUrl: row.trailerUrl,
     language: row.language,
     level: row.level,
     status: row.status,
-    visibility: row.visibility,
     categoryId: row.categoryId,
     durationMinutes: row.durationMinutes,
     estimatedCompletionMinutes: row.estimatedCompletionMinutes,
+    weeklyCommitmentMinutes: row.weeklyCommitmentMinutes,
+    certificateAvailable: row.certificateAvailable,
     priceType: row.priceType,
     priceAmountMinor: row.priceAmountMinor,
     currency: row.currency,
     isFeatured: row.isFeatured,
+    ratingAverage: row.ratingAverage,
+    ratingCount: row.ratingCount,
+    learnerCount: row.learnerCount,
     enrollmentLimit: row.enrollmentLimit,
     enrollmentStartAt: row.enrollmentStartAt,
     enrollmentEndAt: row.enrollmentEndAt,
     publishAt: row.publishAt,
     expireAt: row.expireAt,
+    reviewNotes: row.reviewNotes,
     seo: {
       title: row.seoTitle ?? row.title,
       description: row.seoDescription ?? row.shortDescription,
@@ -238,6 +281,8 @@ export function toAdminCourse(row: CourseRow): AdminCourse {
     version: row.version,
     createdBy: row.createdBy,
     updatedBy: row.updatedBy,
+    reviewedBy: row.reviewedBy,
+    publishedBy: row.publishedBy,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     publishedAt: row.publishedAt,
