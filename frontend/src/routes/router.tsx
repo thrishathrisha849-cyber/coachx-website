@@ -28,6 +28,11 @@ const CmsPageRoute = lazy(() => import('@/pages/CmsPageRoute').then((m) => ({ de
 const BlogListPage = lazy(() => import('@/pages/BlogListPage').then((m) => ({ default: m.BlogListPage })));
 const BlogDetailPage = lazy(() => import('@/pages/BlogDetailPage').then((m) => ({ default: m.BlogDetailPage })));
 const SearchPage = lazy(() => import('@/pages/SearchPage').then((m) => ({ default: m.SearchPage })));
+// Phase 6 Part 1 — course discovery routes, registered BEFORE the ':slug'
+// CMS catch-all below (route order matters: otherwise '/courses' would be
+// swallowed as a CMS page-slug lookup instead of reaching these).
+const CourseListPage = lazy(() => import('@/pages/CourseListPage').then((m) => ({ default: m.CourseListPage })));
+const CourseDetailPage = lazy(() => import('@/pages/CourseDetailPage').then((m) => ({ default: m.CourseDetailPage })));
 const NewsletterUnsubscribePage = lazy(() =>
   import('@/pages/NewsletterUnsubscribePage').then((m) => ({ default: m.NewsletterUnsubscribePage })),
 );
@@ -45,6 +50,8 @@ export const router = createBrowserRouter([
       { path: 'blog', element: withSuspense(<BlogListPage />) },
       { path: 'blog/:slug', element: withSuspense(<BlogDetailPage />) },
       { path: 'search', element: withSuspense(<SearchPage />) },
+      { path: 'courses', element: withSuspense(<CourseListPage />) },
+      { path: 'courses/:slug', element: withSuspense(<CourseDetailPage />) },
       { path: 'newsletter/unsubscribe', element: withSuspense(<NewsletterUnsubscribePage />) },
       { path: 'status', element: <SystemStatus /> },
       { path: 'maintenance', element: <Maintenance /> },

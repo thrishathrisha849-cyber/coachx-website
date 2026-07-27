@@ -52,15 +52,21 @@ export async function reorderModulePositions(
   tx: TransactionClient,
 ): Promise<void> {
   const OFFSET = 1_000_000; // Well above any realistic module count.
+  // `courseId` is threaded into every `updateMany` `where` clause below
+  // (not just `{ id: ... }`) as a defense-in-depth belt-and-suspenders
+  // check on top of the caller's own full-set validation
+  // (module.service.ts's `reorderCourseModules`) — an id that somehow
+  // belongs to a DIFFERENT course silently matches zero rows here instead
+  // of cross-course-corrupting another course's module ordering.
   for (let i = 0; i < orderedIds.length; i++) {
-    await tx.courseModule.update({
-      where: { id: orderedIds[i] },
+    await tx.courseModule.updateMany({
+      where: { id: orderedIds[i], courseId },
       data: { position: OFFSET + i },
     });
   }
   for (let i = 0; i < orderedIds.length; i++) {
-    await tx.courseModule.update({
-      where: { id: orderedIds[i] },
+    await tx.courseModule.updateMany({
+      where: { id: orderedIds[i], courseId },
       data: { position: i },
     });
   }

@@ -45,5 +45,8 @@ export function removeInstructorAssignment(courseId: string, userId: string, tx?
 }
 
 export function findUserById(userId: string, tx?: TransactionClient) {
-  return db(tx).user.findUnique({ where: { id: userId }, include: { roles: { include: { role: true } } } });
+  return db(tx).user.findUnique({
+    where: { id: userId },
+    include: { roles: { include: { role: true } }, profile: true },
+  });
 }
