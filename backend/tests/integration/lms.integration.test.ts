@@ -68,9 +68,18 @@ async function seedRolesAndPermissions() {
   }
 }
 
+let registrationIpCounter = 0;
+
 async function createUserWithRole(email: string, roleName: string) {
+  // Distinct X-Forwarded-For per synthetic user (trust proxy is enabled
+  // in app.ts) so the fixed 5/hour per-IP registerRateLimiter doesn't
+  // 429 fixtures needing more than 5 distinct accounts in one file.
+  registrationIpCounter += 1;
+  const testIp = `10.${(registrationIpCounter >> 16) & 0xff}.${(registrationIpCounter >> 8) & 0xff}.${registrationIpCounter & 0xff}`;
+
   await request(app)
     .post('/api/v1/auth/register')
+    .set('X-Forwarded-For', testIp)
     .send({ name: 'LMS Test User', email, password: 'GoodPassword1', confirmPassword: 'GoodPassword1', acceptedTerms: true });
 
   const sentMessage = emailAdapter.sent.find((m: any) => m.to === email && m.subject.includes('Verify'));
@@ -80,8 +89,11 @@ async function createUserWithRole(email: string, roleName: string) {
   const db = getPrismaClient();
   const user = await db.user.findUnique({ where: { email: email.toLowerCase() } });
   const role = await db.role.findUnique({ where: { name: roleName } });
-  await db.userRole.create({ data: { userId: user.id, roleId: role.id } });
-  await db.userProfile.create({ data: { userId: user.id, displayName: 'LMS Test User' } });
+  await db.userRole.upsert({
+    where: { userId_roleId: { userId: user.id, roleId: role.id } },
+    create: { userId: user.id, roleId: role.id },
+    update: {},
+  });
 
   const loginRes = await request(app).post('/api/v1/auth/login').send({ email, password: 'GoodPassword1' });
   return { userId: user.id, accessToken: loginRes.body.data.accessToken };

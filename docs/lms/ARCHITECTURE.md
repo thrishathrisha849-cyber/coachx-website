@@ -129,3 +129,7 @@ Enrollment, Student progress, Continue Learning, Quizzes, Assignments,
 Certificates, Reviews/ratings, Wishlist, Learning Path/Program/Cohort
 entities, payment processing, and any admin editor UI beyond the minimal
 scope described in `docs/lms/DECISION_GATES.md`'s admin-frontend gate.
+
+## Phase 6 Part 2 addendum
+
+The same architecture-conflict caveat above (Express, not NestJS; Vite/React Router SPA, not Next.js) applies identically to every Part 2 file. Part 2 added no new top-level module directory — `Lesson`, `LearningActivity`, `Enrollment`, `LessonProgress`, `CompletionOverride`, the entitlement boundary, the access evaluator, the progress/completion engines, and Continue Learning all live inside the same flat `backend/src/lms/` folder Part 1 established, following the same one-concern-per-file convention (`lesson.*`, `activity.*`, `enrollment.*`, `progress.*`, `completion.*`, `access-evaluator.service.ts`, `continue-learning.service.ts`, `entitlement.service.ts`). See `docs/lms/LESSON_ARCHITECTURE.md`, `LEARNING_ACTIVITIES.md`, `ENROLLMENT_LIFECYCLE.md`, `ENTITLEMENT_BOUNDARY.md`, `ACCESS_DECISION_ENGINE.md`, `PROGRESS_ENGINE.md`, `COMPLETION_ENGINE.md`, `PREREQUISITES_AND_RELEASE.md`, and `CONTINUE_LEARNING.md` for the detailed design of each. Still no admin/member frontend — see `TRACEABILITY_PART2.md`'s "Frontend decision" section and `DECISION_GATES.md` gates #32–33 for the re-verified confirmation.

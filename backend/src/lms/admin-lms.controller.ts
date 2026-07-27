@@ -27,10 +27,37 @@ import {
   updateCourseModule,
   archiveCourseModule,
   restoreCourseModule,
+  releaseModuleNow,
   reorderCourseModules,
   listModulesForCourseAdmin,
   getModuleAdmin,
 } from './module.service';
+import {
+  createCourseLesson,
+  updateCourseLesson,
+  archiveCourseLesson,
+  restoreCourseLesson,
+  reorderCourseLessons,
+  listLessonsForModuleAdmin,
+  getLessonAdmin,
+} from './lesson.service';
+import {
+  createLearningActivity,
+  updateLearningActivity,
+  archiveLearningActivity,
+  reorderLessonActivities,
+  listActivitiesForLessonAdmin,
+} from './activity.service';
+import {
+  adminGrantEnrollment,
+  suspendEnrollment,
+  reactivateEnrollment,
+  revokeEnrollment,
+  extendEnrollmentAccess,
+  listEnrollmentsAdmin,
+  getEnrollmentAdmin,
+} from './enrollment.service';
+import { overrideMarkComplete, overrideReset } from './completion.service';
 
 /**
  * Admin LMS write API (Phase 6 Part 1 brief's "Admin API Requirements").
@@ -214,4 +241,139 @@ export const postArchiveModule = asyncHandler(async (req: Request, res: Response
 export const postRestoreModule = asyncHandler(async (req: Request, res: Response) => {
   const module_ = await restoreCourseModule(req.params.moduleId, req.user!.id);
   res.status(200).json(buildSuccessResponse(module_));
+});
+
+/** FR-034/FR-038 instructor/admin manual release — added during the database-verification pass. See module.service.ts's `releaseModuleNow`. */
+export const postReleaseModule = asyncHandler(async (req: Request, res: Response) => {
+  const module_ = await releaseModuleNow(req.params.moduleId, req.user!.id, req.header('Idempotency-Key'));
+  res.status(200).json(buildSuccessResponse(module_));
+});
+
+// --- Lessons (Phase 6 Part 2A) ---------------------------------------------
+
+export const postLesson = asyncHandler(async (req: Request, res: Response) => {
+  const lesson = await createCourseLesson(req.params.moduleId, req.body, req.user!.id);
+  res.status(201).json(buildSuccessResponse(lesson));
+});
+
+export const getModuleLessons = asyncHandler(async (req: Request, res: Response) => {
+  const lessons = await listLessonsForModuleAdmin(req.params.moduleId);
+  res.status(200).json(buildSuccessResponse(lessons));
+});
+
+export const getLessonById = asyncHandler(async (req: Request, res: Response) => {
+  const lesson = await getLessonAdmin(req.params.lessonId);
+  res.status(200).json(buildSuccessResponse(lesson));
+});
+
+export const patchLesson = asyncHandler(async (req: Request, res: Response) => {
+  const lesson = await updateCourseLesson(req.params.lessonId, req.body, req.user!.id);
+  res.status(200).json(buildSuccessResponse(lesson));
+});
+
+export const postReorderLessons = asyncHandler(async (req: Request, res: Response) => {
+  await reorderCourseLessons(req.params.moduleId, req.body.orderedIds, req.user!.id);
+  res.status(200).json(buildSuccessResponse({ reordered: true }));
+});
+
+export const postArchiveLesson = asyncHandler(async (req: Request, res: Response) => {
+  const lesson = await archiveCourseLesson(req.params.lessonId, req.user!.id);
+  res.status(200).json(buildSuccessResponse(lesson));
+});
+
+export const postRestoreLesson = asyncHandler(async (req: Request, res: Response) => {
+  const lesson = await restoreCourseLesson(req.params.lessonId, req.user!.id);
+  res.status(200).json(buildSuccessResponse(lesson));
+});
+
+// --- Learning Activities (Phase 6 Part 2A) ---------------------------------
+
+export const postActivity = asyncHandler(async (req: Request, res: Response) => {
+  const activity = await createLearningActivity(req.params.lessonId, req.body, req.user!.id);
+  res.status(201).json(buildSuccessResponse(activity));
+});
+
+export const getLessonActivities = asyncHandler(async (req: Request, res: Response) => {
+  const activities = await listActivitiesForLessonAdmin(req.params.lessonId);
+  res.status(200).json(buildSuccessResponse(activities));
+});
+
+export const patchActivity = asyncHandler(async (req: Request, res: Response) => {
+  const activity = await updateLearningActivity(req.params.activityId, req.body, req.user!.id);
+  res.status(200).json(buildSuccessResponse(activity));
+});
+
+export const postReorderActivities = asyncHandler(async (req: Request, res: Response) => {
+  await reorderLessonActivities(req.params.lessonId, req.body.orderedIds, req.user!.id);
+  res.status(200).json(buildSuccessResponse({ reordered: true }));
+});
+
+export const postArchiveActivity = asyncHandler(async (req: Request, res: Response) => {
+  const activity = await archiveLearningActivity(req.params.activityId, req.user!.id);
+  res.status(200).json(buildSuccessResponse(activity));
+});
+
+// --- Enrollments (Phase 6 Part 2B) -----------------------------------------
+
+export const postEnrollment = asyncHandler(async (req: Request, res: Response) => {
+  const enrollment = await adminGrantEnrollment(
+    {
+      userId: req.body.userId,
+      courseId: req.body.courseId,
+      source: req.body.source,
+      accessStartAt: req.body.accessStartAt ? new Date(req.body.accessStartAt) : undefined,
+      accessEndAt: req.body.accessEndAt ? new Date(req.body.accessEndAt) : undefined,
+      reason: req.body.reason,
+    },
+    req.user!.id,
+    req.header('Idempotency-Key'),
+  );
+  res.status(201).json(buildSuccessResponse(enrollment));
+});
+
+export const getEnrollmentsAdmin = asyncHandler(async (req: Request, res: Response) => {
+  const result = await listEnrollmentsAdmin(
+    {
+      courseId: req.query.courseId as string | undefined,
+      userId: req.query.userId as string | undefined,
+      status: req.query.status as string | undefined,
+    },
+    { page: req.query.page as string, pageSize: req.query.pageSize as string },
+  );
+  res.status(200).json(buildSuccessResponse(result.data, { ...result.meta }));
+});
+
+export const getEnrollmentByIdAdmin = asyncHandler(async (req: Request, res: Response) => {
+  const enrollment = await getEnrollmentAdmin(req.params.id);
+  res.status(200).json(buildSuccessResponse(enrollment));
+});
+
+export const postSuspendEnrollment = asyncHandler(async (req: Request, res: Response) => {
+  const enrollment = await suspendEnrollment(req.params.id, req.user!.id, req.body.reason);
+  res.status(200).json(buildSuccessResponse(enrollment));
+});
+
+export const postReactivateEnrollment = asyncHandler(async (req: Request, res: Response) => {
+  const enrollment = await reactivateEnrollment(req.params.id, req.user!.id, req.body.reason);
+  res.status(200).json(buildSuccessResponse(enrollment));
+});
+
+export const postRevokeEnrollment = asyncHandler(async (req: Request, res: Response) => {
+  const enrollment = await revokeEnrollment(req.params.id, req.user!.id, req.body.reason);
+  res.status(200).json(buildSuccessResponse(enrollment));
+});
+
+export const postExtendEnrollmentAccess = asyncHandler(async (req: Request, res: Response) => {
+  const enrollment = await extendEnrollmentAccess(req.params.id, req.user!.id, req.body.accessEndAt ? new Date(req.body.accessEndAt) : null);
+  res.status(200).json(buildSuccessResponse(enrollment));
+});
+
+export const postOverrideComplete = asyncHandler(async (req: Request, res: Response) => {
+  await overrideMarkComplete(req.params.id, req.body.scope, req.body.targetId, req.body.reason, req.user!.id, 'ADMIN_OVERRIDE', req.header('Idempotency-Key'));
+  res.status(200).json(buildSuccessResponse({ overridden: true }));
+});
+
+export const postResetProgress = asyncHandler(async (req: Request, res: Response) => {
+  await overrideReset(req.params.id, req.body.scope, req.body.targetId, req.body.reason, req.user!.id, req.header('Idempotency-Key'));
+  res.status(200).json(buildSuccessResponse({ reset: true }));
 });

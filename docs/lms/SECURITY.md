@@ -146,3 +146,39 @@ new secret-shaped strings were committed.
 
 **Unchanged from Phase 5** (`docs/public-site/SECURITY.md`'s existing
 CSP note) — the LMS module introduces no new inline-script pattern.
+
+## Phase 6 Part 2 security review
+
+**IDOR / broken object-level authorization.** Every `/me/*` route resolves the acting user exclusively from `req.user!.id` (the verified access token) — no route accepts a `userId` in params/query/body anywhere. `progress.service.ts`, `completion.service.ts`, and `access-evaluator.service.ts` all re-derive the caller's own enrollment server-side rather than trusting a client-supplied enrollment/course id to belong to the caller. Verified by the integration suite's Scenario 5 (cross-account admin-action rejection, cross-instructor course-enrollment-list rejection).
+
+**Mass assignment.** A learner can never set their own `EnrollmentSource`, `EnrollmentStatus`, `completedAt`, `accessEndAt`, or any other privileged field — `selfEnrollSchema` accepts only `{ courseId }`; every other Enrollment-mutating field is reachable only through admin/instructor-only schemas gated by RBAC + ownership.
+
+**Status-transition bypass.** Both `course-lifecycle.policy.ts` (Part 1) and `enrollment.policy.ts` (Part 2) are the SOLE source of transition legality — no direct `.update({ status: ... })` call bypassing `assertValidEnrollmentTransition` exists anywhere in the Part 2 codebase (verified by code review of every `enrollment.repository.ts`/`completion.service.ts` write site).
+
+**Per-content-type activity security.** See `LEARNING_ACTIVITIES.md`'s "Per-content-type security rules" — safe-scheme-only URLs (no `javascript:`/`data:`), a closed EMBED-provider allowlist, never raw iframe HTML. Verified by `lesson-validation.unit.test.ts`.
+
+**Preview-as-entitlement-bypass.** Explicitly reviewed and closed: `progress.service.ts` and `completion.service.ts` both reject a progress/completion write when access was granted `viaPreview` — a learner cannot "enroll via preview." See `ACCESS_DECISION_ENGINE.md`.
+
+**Entitlement-integration safety.** No Order/Payment/Invoice/Subscription model exists anywhere in `database/prisma/schema.prisma` — verified via `grep -i "model Order\|model Payment\|model Invoice\|model Subscription"` returning no matches. Every non-FREE/ADMIN_GRANT entitlement source fails closed (`UNAVAILABLE`), never silently allowed. See `ENTITLEMENT_BOUNDARY.md`.
+
+**Fail-closed on missing background jobs.** No scheduler/cron exists in this codebase. `isEnrollmentAccessWindowOpen` and `isCoursePubliclyVisible` (Part 1) both re-derive their answer from stored timestamps on every read, so an un-run background job can never cause a stale-permissive access grant. Verified by the integration suite's Scenario 8 and by `enrollment-policy.unit.test.ts`.
+
+## Correction pass — re-verified + newly added security properties
+
+Every item below was RE-TESTED (not merely re-asserted) during the mandatory correction and verification pass, per the correction brief's explicit "Security Review" section:
+
+- **Learner enrollment IDOR** — re-verified: `/me/*` routes still exclusively resolve the acting user from `req.user!.id`; a cross-account admin-action attempt (Scenario 5) still rejects with 403. No regression introduced by the correction pass's new routes/fields.
+- **Instructor course-scope enforcement** — re-verified: the new instructor-facing override endpoint (`postMyInstructorOverrideComplete`) still calls `assertInstructorOwnsCourse` before touching another instructor's enrollment data, and still rejects a `COURSE`-scope override attempt (admin-only) with 403.
+- **Admin privileged-action permission** — re-verified: the new `postEnrollment`/`postOverrideComplete`/`postResetProgress` idempotency-key threading did not weaken the underlying `course.manageInstructors` RBAC gate at the route layer — the `Idempotency-Key` header is read AFTER authentication/authorization middleware has already run.
+- **Completion override reason requirement / progress reset reason requirement** — unchanged, still enforced by `enrollment.validation.ts`'s Zod schemas (`reason` min 3 chars) before the idempotency wrapper is ever reached.
+- **Paid-content fail-closed behavior** — re-verified and UNCHANGED: `entitlement.service.ts`'s `evaluateEntitlement` still returns `UNAVAILABLE` for every non-FREE/ADMIN_GRANT source; the correction pass added NO new entitlement source and NO new path to `ALLOWED`. Capacity enforcement (new this pass) is an ADDITIONAL fail-closed check (rejects when full), never a path that grants access more permissively.
+- **Direct lesson URL access** — re-verified: `GET /me/lessons/:id` still runs `evaluateLessonAccess` before returning content; the new `completionRuleTypes` field does not change this gate.
+- **Progress endpoint access bypass** — re-verified AND HARDENED this pass: `assertLastPositionMatchesLessonActivities` now additionally rejects a `lastPosition` signal for an activity type not present in the target lesson (see `PROGRESS_ENGINE.md`) — closing a narrow signal-forgery gap the original design left open.
+- **Preview entitlement bypass** — re-verified: `recordActivityViewed` (new this pass) explicitly rejects a `viaPreview` access grant with 400, mirroring the same check `progress.service.ts`/`completeLessonManually` already had — a learner cannot accumulate `ALL_ACTIVITIES_VIEWED` progress via preview access either.
+- **Idempotency-key cross-user isolation** — NEW this pass, verified by both a unit test (`lms-idempotency.unit.test.ts`) and an integration test (Correction 1's "actor scope" scenario): `scopedIdempotencyKey` always prefixes the resolved key with the acting user's id, so two different actors supplying the identical literal `Idempotency-Key` header value can never collide or replay each other's result.
+
+**The fail-closed entitlement boundary was NOT weakened.** `entitlement.service.ts` was never opened for editing during this correction pass (it remains exactly as written in the prior turn — `git diff` cannot itself confirm this since the file is still untracked/uncommitted from before this pass began, so there is no git-level "before" snapshot to diff against for it specifically; the claim rests on direct review of every file this pass touched, listed in the final report's changed-file list, which does not include `entitlement.service.ts`). Every correction this pass made either ADDS a new fail-closed check (capacity, cross-activity signal rejection) or CORRECTS a defect toward stricter enforcement (`ALL_ACTIVITIES_VIEWED`), never loosens an existing one.
+
+## Database verification pass status
+
+Every security property above (IDOR, ownership, override/reset reason requirements, fail-closed entitlement, direct-URL access, preview bypass, idempotency isolation) has been verified via code review and, where a database is not required (Zod schema behavior, pure-function logic), via genuinely-executed unit tests. **None have been verified end-to-end against a real PostgreSQL database with real concurrent requests in this session** — PostgreSQL/Docker are unavailable in this sandbox. In particular, the concurrency-dependent guarantees ("two simultaneous active-enrollment requests produce exactly one row," "the database constraint is the final protection layer," "no database deadlock left unhandled") rest on PostgreSQL's own transaction/locking behavior and cannot be proven by a self-skipping test or by code review alone — they remain reviewed, reasoned, and tested-in-principle, not database-verified. Do not treat this document's "re-verified" language above as equivalent to live-database verification; the distinction is deliberate and matches `docs/lms/TESTING.md`'s honest reporting discipline.

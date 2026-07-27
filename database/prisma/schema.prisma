@@ -256,6 +256,8 @@ model User {
   /// FR "instructor" is a ROLE + assignment record on top of the
   /// existing User, never a duplicate identity.
   courseInstructorRoles CourseInstructor[]
+  /// Phase 6 Part 2 — a learner's course access grants (004 FR-021–033).
+  enrollments           Enrollment[]
 
   @@index([status])
   @@map("users")
@@ -1204,6 +1206,8 @@ model Course {
 
   modules     CourseModule[]
   instructors CourseInstructor[]
+  /// Phase 6 Part 2 (004 FR-021–033).
+  enrollments Enrollment[]
 
   @@index([status])
   @@index([categoryId])
@@ -1327,13 +1331,21 @@ model CourseModule {
   /// Values chosen from FR-034's list are the ones meaningful without a
   /// Cohort entity (not built): IMMEDIATE, DAYS_AFTER_ENROLLMENT,
   /// FIXED_DATE, AFTER_PREVIOUS_MODULE, INSTRUCTOR_RELEASE.
-  releaseRuleType  ModuleReleaseRuleType @default(IMMEDIATE) @map("release_rule_type")
+  releaseRuleType    ModuleReleaseRuleType @default(IMMEDIATE) @map("release_rule_type")
   /// The type-dependent value (e.g. `{"days": 7}` for
   /// DAYS_AFTER_ENROLLMENT, `{"date": "2026-01-01T00:00:00Z"}` for
   /// FIXED_DATE) — same "enum type + Json value" pattern
   /// `backend/src/cms/block-schemas.ts` already established for
   /// per-type-shaped configuration, not a free-form metadata substitute.
-  releaseRuleValue Json?                 @map("release_rule_value")
+  releaseRuleValue   Json?                 @map("release_rule_value")
+  /// Phase 6 Part 2 ADDITIVE field: the timestamp an instructor/admin
+  /// manually released this module for a releaseRuleType=INSTRUCTOR_RELEASE
+  /// module (004 FR-034). Course-WIDE, not per-enrollment — FR-034 describes
+  /// "instructor release" as the instructor unlocking the module for
+  /// everyone, not a per-learner grant (that per-learner case is what
+  /// CompletionOverride/admin enrollment actions already cover elsewhere).
+  /// Null = not yet manually released.
+  manuallyReleasedAt DateTime?             @map("manually_released_at") @db.Timestamptz(6)
 
   /// FR-052 completion-rule TYPE (config only). Only the two values that
   /// are meaningful without Lesson/Quiz/Assignment data are modeled in
@@ -1353,6 +1365,9 @@ model CourseModule {
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  /// Phase 6 Part 2 (004 FR-017–018) — this module's ordered Lessons.
+  lessons Lesson[]
 
   @@unique([courseId, position])
   @@index([courseId, status])
@@ -1419,4 +1434,439 @@ enum InstructorCourseRole {
   TEACHING_ASSISTANT
 
   @@map("instructor_course_role")
+}
+
+// =============================================================================
+// Phase 6 Part 2 — Lessons, Learning Activities, Enrollment, Progress
+// (004 FR-017–060). Additive to Part 1's Course/CourseModule — no Part 1
+// table/column is altered by this section (only CourseModule gained the
+// small additive `manuallyReleasedAt` field and a `lessons` back-relation
+// above). See docs/lms/LESSON_ARCHITECTURE.md, ENROLLMENT_LIFECYCLE.md,
+// PROGRESS_ENGINE.md for the full design rationale.
+// =============================================================================
+
+/// FR-017/FR-018 — the individual learning unit inside a Module. Deliberately
+/// carries NO `type` field of its own (per Part 2's explicit Lesson field
+/// list, which omits "type") — each attached LearningActivity carries its
+/// own `type`, avoiding two competing sources of content-type truth. A
+/// Lesson with zero activities is a valid (if unusual) intermediate authoring
+/// state; publish-readiness is enforced at the service layer, not the schema.
+model Lesson {
+  id       String       @id @default(uuid()) @db.Uuid
+  moduleId String       @map("module_id") @db.Uuid
+  module   CourseModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  title       String  @db.VarChar(200)
+  slug        String  @db.VarChar(220)
+  summary     String? @db.VarChar(500)
+  description String? @db.Text
+
+  /// Stable ordering within the module — unique per (moduleId, position),
+  /// reordered via the same two-pass offset-then-final-position transactional
+  /// rewrite `module.repository.ts`'s `reorderModulePositions` established
+  /// (see `lesson.repository.ts`'s `reorderLessonPositions`).
+  position Int
+
+  durationMinutes Int?    @map("duration_minutes")
+  /// FR-018 "preview status" — viewable without enrollment/entitlement
+  /// (e.g. a free sample lesson). Preview access is READ-ONLY content
+  /// exposure; it never grants progress/completion — see
+  /// docs/lms/ACCESS_DECISION_ENGINE.md "Preview is not an entitlement."
+  isPreview       Boolean @default(false) @map("is_preview")
+  /// FR-018 "mandatory status" — whether this lesson blocks its module's
+  /// (and therefore the course's) completion once all mandatory lessons
+  /// must be complete. Optional lessons never block completion (FR-054).
+  isMandatory     Boolean @default(true) @map("is_mandatory")
+
+  /// FR-052 lesson-level completion-rule TYPE (config only, same
+  /// "instructor sets intent, engine enforces it" split Part 1 established
+  /// for CourseModule.releaseRuleType/completionRuleType). Only the subset
+  /// meaningful without Quiz/Assignment data (Part 3) is modeled:
+  /// MANUAL (learner marks complete), MINIMUM_WATCH_PERCENT (video/audio
+  /// activity watch threshold), ALL_ACTIVITIES_VIEWED (every attached
+  /// LearningActivity must be viewed), INSTRUCTOR_APPROVAL.
+  completionRuleType  LessonCompletionRuleType   @default(MANUAL) @map("completion_rule_type")
+  /// Type-dependent value, e.g. `{"minPercent": 80}` for
+  /// MINIMUM_WATCH_PERCENT — FR-041's "[NEEDS CLARIFICATION]" default is
+  /// resolved here as instructor-configurable per lesson rather than a
+  /// silently invented global default (see docs/lms/DECISION_GATES.md).
+  completionRuleValue Json?                      @map("completion_rule_value")
+  /// CORRECTION (Part 2 correction pass): FR-052 explicitly states "MUST
+  /// allow a single lesson to combine multiple required conditions" — the
+  /// original Part 2 design only ever stored ONE `completionRuleType`,
+  /// which could not express that. ADDITIVE fix: when non-empty, this
+  /// array is the authoritative set of conditions that must ALL be
+  /// satisfied (AND) before the lesson can complete; `completionRuleType`
+  /// (singular, above) is kept UNCHANGED for backward compatibility and is
+  /// used as a single-element fallback when this array is empty — see
+  /// `completion.service.ts`'s `getEffectiveCompletionRules()`. No
+  /// existing data is altered by this column's addition.
+  completionRuleTypes LessonCompletionRuleType[] @default([]) @map("completion_rule_types")
+
+  status CourseModuleStatus @default(DRAFT)
+
+  version   Int     @default(1)
+  createdBy String? @map("created_by") @db.Uuid
+  updatedBy String? @map("updated_by") @db.Uuid
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  publishedAt DateTime? @map("published_at") @db.Timestamptz(6)
+  /// Soft delete only (Part 2A brief) — a Lesson is never hard-deleted so a
+  /// LessonProgress/CompletionOverride historical record is never orphaned.
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  activities LearningActivity[]
+  progress   LessonProgress[]
+
+  @@unique([moduleId, slug])
+  @@unique([moduleId, position])
+  @@index([moduleId, status])
+  @@map("lessons")
+}
+
+enum LessonCompletionRuleType {
+  MANUAL
+  MINIMUM_WATCH_PERCENT
+  ALL_ACTIVITIES_VIEWED
+  INSTRUCTOR_APPROVAL
+
+  @@map("lesson_completion_rule_type")
+}
+
+/// FR-017 Lesson Types, narrowed to the subset meaningful as metadata-only
+/// content (no runtime playback/streaming/viewer engine is built here —
+/// Part 2A brief: "LearningActivity is METADATA only"). Quiz/Assessment/
+/// Assignment/Project/Survey/Live-session/SCORM/Interactive-tool/
+/// AI-exercise types are explicitly OUT of scope (owned by later phases /
+/// Part 3) and deliberately not modeled as placeholder enum values.
+enum LearningActivityType {
+  VIDEO
+  AUDIO
+  ARTICLE
+  PDF
+  DOWNLOAD
+  EXTERNAL_LINK
+  EMBED
+
+  @@map("learning_activity_type")
+}
+
+/// FR-018's "content source" — one ordered content item within a Lesson.
+/// Typed, per-type nullable columns (per Part 2A's explicit "avoid JSON
+/// blobs when dedicated fields exist" instruction) rather than one big
+/// `data Json` blob. Security note (Part 2C content-type review): EMBED
+/// stores a typed `embedProvider` + `embedResourceId` pair, NEVER raw
+/// iframe/HTML — see `activity.validation.ts` for the provider allowlist
+/// and `docs/lms/LEARNING_ACTIVITIES.md` "Per-content-type security rules."
+model LearningActivity {
+  id       String @id @default(uuid()) @db.Uuid
+  lessonId String @map("lesson_id") @db.Uuid
+  lesson   Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  type  LearningActivityType
+  title String?              @db.VarChar(200)
+
+  /// Ordering within the lesson — unique per (lessonId, position).
+  position Int
+
+  /// VIDEO/AUDIO/DOWNLOAD/PDF — a safe-scheme-only (https:// or a signed
+  /// internal storage reference), typed URL. Never raw HTML.
+  mediaUrl        String? @map("media_url") @db.VarChar(500)
+  /// EXTERNAL_LINK — safe-scheme-only URL, opened as a plain link, never
+  /// rendered as an embed.
+  externalUrl     String? @map("external_url") @db.VarChar(500)
+  /// ARTICLE — plain/sanitized text body (rendered as text, not raw HTML —
+  /// same rich-text-vs-raw-HTML discipline as the CMS block-schemas model).
+  bodyText        String? @map("body_text") @db.Text
+  /// VIDEO/AUDIO — used by MINIMUM_WATCH_PERCENT completion evaluation.
+  durationSeconds Int?    @map("duration_seconds")
+  /// DOWNLOAD/PDF — metadata only, no virus-scanning/upload pipeline built
+  /// here (out of scope — see docs/lms/LEARNING_ACTIVITIES.md limitations).
+  fileSizeBytes   Int?    @map("file_size_bytes")
+  /// EMBED — a typed provider identifier from a closed allowlist (e.g.
+  /// "youtube", "vimeo") plus an opaque provider-specific resource ID.
+  /// Never a raw iframe `src`/HTML string (Part 2C security requirement).
+  embedProvider   String? @map("embed_provider") @db.VarChar(60)
+  embedResourceId String? @map("embed_resource_id") @db.VarChar(200)
+
+  status CourseModuleStatus @default(DRAFT)
+
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  progress ActivityProgress[]
+
+  @@unique([lessonId, position])
+  @@index([lessonId, status])
+  @@map("learning_activities")
+}
+
+/// CORRECTION (Part 2 correction pass) — real, server-derived tracking of
+/// "has this enrollment viewed this activity," replacing the original
+/// design defect where `ALL_ACTIVITIES_VIEWED` was silently evaluated as
+/// an alias of `MANUAL` (i.e. never actually checked whether activities
+/// were viewed). One row per (enrollment, activity); `viewedAt` is set by
+/// the server the first time `POST /me/activities/:id/viewed` succeeds
+/// (idempotent upsert — a repeat call is a no-op, never a duplicate row,
+/// per the `@@unique([enrollmentId, activityId])` constraint). The client
+/// NEVER supplies a "viewed" boolean directly — it reports the discrete
+/// event "I viewed this specific activity," and the server aggregates
+/// across every activity in a lesson to decide whether
+/// `ALL_ACTIVITIES_VIEWED` is satisfied (see
+/// `completion.service.ts`'s `areAllRequiredActivitiesViewed`).
+model ActivityProgress {
+  id           String           @id @default(uuid()) @db.Uuid
+  enrollmentId String           @map("enrollment_id") @db.Uuid
+  enrollment   Enrollment       @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  activityId   String           @map("activity_id") @db.Uuid
+  activity     LearningActivity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  /// Denormalized from `activity.lessonId` — avoids a join through
+  /// LearningActivity on every "are all of this lesson's activities
+  /// viewed" query, which the completion engine runs on the hot path of
+  /// every progress/activity-view update.
+  lessonId     String           @map("lesson_id") @db.Uuid
+
+  viewedAt DateTime? @map("viewed_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([enrollmentId, activityId])
+  @@index([enrollmentId, lessonId])
+  @@map("activity_progress")
+}
+
+/// FR-021 access-grant SOURCE taxonomy, modeled exactly as FR-021 lists it
+/// (so the type system stays truthful even though Part 2 can only actually
+/// FULFILL a subset of these — see entitlement.service.ts). MEMBERSHIP,
+/// PURCHASE, PROGRAM, ORGANIZATION, COUPON, SCHOLARSHIP, TRIAL, and INVITE
+/// all exist as valid taxonomy values a future Feature 009/007 integration
+/// can populate, but `entitlement.service.ts`'s `evaluateEntitlement()`
+/// deterministically returns `UNAVAILABLE` (fail-closed) for every one of
+/// them in Part 2 — no LMS code path here ever fabricates approval for
+/// them. Only FREE (learner self-enroll on a FREE-priced course) and
+/// ADMIN_GRANT (an administrator's own authority IS the entitlement
+/// decision) are actually grantable in Part 2.
+enum EnrollmentSource {
+  FREE
+  MEMBERSHIP
+  PURCHASE
+  PROGRAM
+  ORGANIZATION
+  ADMIN_GRANT
+  COUPON
+  SCHOLARSHIP
+  TRIAL
+  INVITE
+
+  @@map("enrollment_source")
+}
+
+/// FR-023 Access States, narrowed to what an Enrollment ROW's own lifecycle
+/// status needs to express (FR-023's "Eligible-not-enrolled" is a pre-
+/// enrollment computed state, never stored; "Refunded" is deferred to
+/// Feature 009 — see CANCELLED doc comment below).
+enum EnrollmentStatus {
+  /// Created but not yet activated (e.g. awaiting a future entitlement
+  /// resolution) — FREE/ADMIN_GRANT enrollments in Part 2 move directly to
+  /// ACTIVE and never actually rest in PENDING, but the state remains
+  /// valid for a future entitlement source that has an approval delay.
+  PENDING
+  ACTIVE
+  SUSPENDED
+  EXPIRED
+  /// LMS-owned cancellation (admin/withdrawal), distinct from a payment
+  /// REFUND — refund policy/logic is explicitly Feature 009's territory
+  /// (Part 2B/2C stop-list: "no refund logic"). A future Feature 009
+  /// refund event is expected to call into this same CANCELLED transition
+  /// via its own integration code, not reimplement it here.
+  CANCELLED
+  COMPLETED
+  REVOKED
+
+  @@map("enrollment_status")
+}
+
+/// FR-021–033 — the record of a learner's access grant to a Course.
+/// Typed enums/timestamps throughout (never a JSON blob) per Part 2B's
+/// explicit "typed enums not JSON" instruction. See
+/// docs/lms/ENROLLMENT_LIFECYCLE.md for the full state machine and
+/// docs/lms/ENTITLEMENT_BOUNDARY.md for why `entitlementReference` is a
+/// loose opaque string, not a Feature-009 foreign key that doesn't exist.
+model Enrollment {
+  id       String @id @default(uuid()) @db.Uuid
+  userId   String @map("user_id") @db.Uuid
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId String @map("course_id") @db.Uuid
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Restrict)
+
+  source EnrollmentSource
+  status EnrollmentStatus @default(PENDING)
+
+  /// Opaque reference to whatever granted this enrollment — an admin actor
+  /// ID for ADMIN_GRANT, or (in a future Feature 009 integration) an order/
+  /// membership/coupon ID. LMS does not define or own the referenced
+  /// record's schema (Part 2C: "no Order/Payment/Invoice model is added by
+  /// LMS").
+  entitlementReference String? @map("entitlement_reference") @db.VarChar(200)
+
+  enrolledAt     DateTime  @default(now()) @map("enrolled_at") @db.Timestamptz(6)
+  activatedAt    DateTime? @map("activated_at") @db.Timestamptz(6)
+  /// Access window — FR-024. Null accessStartAt = immediately available;
+  /// null accessEndAt = lifetime access.
+  accessStartAt  DateTime? @map("access_start_at") @db.Timestamptz(6)
+  accessEndAt    DateTime? @map("access_end_at") @db.Timestamptz(6)
+  suspendedAt    DateTime? @map("suspended_at") @db.Timestamptz(6)
+  cancelledAt    DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(6)
+  /// Server-derived only (completion.service.ts) — never client-settable.
+  completedAt    DateTime? @map("completed_at") @db.Timestamptz(6)
+  expiredAt      DateTime? @map("expired_at") @db.Timestamptz(6)
+  lastAccessedAt DateTime? @map("last_accessed_at") @db.Timestamptz(6)
+
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  lessonProgress      LessonProgress[]
+  completionOverrides CompletionOverride[]
+  activityProgress    ActivityProgress[]
+
+  // NOTE: "one ACTIVE/PENDING enrollment per (userId, courseId)" is enforced
+  // by a hand-added PARTIAL unique index in the migration (Prisma's DSL
+  // cannot express a WHERE-scoped unique constraint) — same pattern as
+  // Part 1's `course_instructors_one_primary_per_course` index. A CANCELLED/
+  // REVOKED/EXPIRED enrollment does NOT block a new enrollment row for the
+  // same (user, course) — e.g. re-enrolling after a revoke.
+  @@index([userId, status])
+  @@index([courseId, status])
+  @@map("enrollments")
+}
+
+/// FR-052/FR-054 — per-learner, per-lesson completion state (the "Lesson
+/// Progress" key entity). Course/Module/Path progress are DELIBERATELY
+/// DERIVED at read time from this table (see progress.service.ts's
+/// `computeModuleProgress`/`computeCourseProgress`), not separately stored
+/// — avoids a second, driftable source of truth that would need to be kept
+/// in lockstep with every LessonProgress write. See
+/// docs/lms/PROGRESS_ENGINE.md "Why progress is derived, not stored" for
+/// the full reasoning (Part 2B explicitly asked the reviewer to decide
+/// this; this is the resolved decision).
+model LessonProgress {
+  id           String     @id @default(uuid()) @db.Uuid
+  enrollmentId String     @map("enrollment_id") @db.Uuid
+  enrollment   Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  lessonId     String     @map("lesson_id") @db.Uuid
+  lesson       Lesson     @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  status           LessonProgressStatus @default(NOT_STARTED)
+  /// 0–100, always SERVER-DERIVED (never a client-supplied absolute value
+  /// accepted verbatim) — see progress.service.ts's anti-rollback clamp.
+  percentage       Int                  @default(0)
+  timeSpentSeconds Int                  @default(0) @map("time_spent_seconds")
+  /// Typed-at-the-application-layer learning position (validated/bounded by
+  /// `progress.validation.ts`'s `lastPositionSchema` discriminated union by
+  /// activity kind) — stored as Json here only because its shape varies by
+  /// activity type (video position vs. article scroll vs. PDF page), the
+  /// same "enum type decides shape" pattern as Part 1's
+  /// `releaseRuleValue`/`completionRuleValue`.
+  lastPosition     Json?                @map("last_position")
+
+  startedAt        DateTime?               @map("started_at") @db.Timestamptz(6)
+  lastAccessedAt   DateTime?               @map("last_accessed_at") @db.Timestamptz(6)
+  /// Server-derived only — never accepted directly from a client payload.
+  completedAt      DateTime?               @map("completed_at") @db.Timestamptz(6)
+  completionSource LessonCompletionSource? @map("completion_source")
+
+  /// Optimistic-concurrency guard for the progress-update endpoint (Part 2B
+  /// "transaction/concurrency safety") — incremented on every update.
+  version   Int      @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([enrollmentId, lessonId])
+  @@index([enrollmentId])
+  @@index([lessonId])
+  @@index([enrollmentId, lastAccessedAt])
+  @@map("lesson_progress")
+}
+
+/// FR-052/FR-054 — deliberately only the 3 states Part 2B's brief allows
+/// without further clarification ("not started/in progress/completed only,
+/// unless spec requires more") — FR-072's richer Assignment-status list is
+/// a DIFFERENT entity (Submission, Part 3/assignments) and not reused here.
+enum LessonProgressStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+
+  @@map("lesson_progress_status")
+}
+
+/// Who/what satisfied a lesson's completion — an audit-relevant provenance
+/// tag distinct from the completion RULE type (LessonCompletionRuleType)
+/// configured on the Lesson itself.
+enum LessonCompletionSource {
+  /// Learner explicitly clicked "mark complete" (completionRuleType=MANUAL).
+  MANUAL_LEARNER
+  /// Server evaluated a configured signal (e.g. MINIMUM_WATCH_PERCENT met)
+  /// and derived completion — never a raw "video opened" event (004
+  /// FR-053/SC-001 — Constitution Article IX).
+  SIGNAL_DERIVED
+  INSTRUCTOR_OVERRIDE
+  ADMIN_OVERRIDE
+
+  @@map("lesson_completion_source")
+}
+
+/// FR-113 — "Authorized admin/instructor roles MUST be able to override
+/// progress... each requiring a stated reason, sufficient permission, an
+/// audit entry." A generic, reusable override record (rather than a
+/// bespoke table per scope) — LESSON/MODULE/COURSE scope plus a
+/// MARK_COMPLETE/RESET action, always reason + actor + before/after
+/// snapshot. Consumed by completion.service.ts to answer "was this
+/// MODULE/COURSE ever manually approved/completed" for the
+/// INSTRUCTOR_APPROVAL completion-rule case, and to let an admin RESET a
+/// learner's progress with a full audit trail.
+model CompletionOverride {
+  id           String     @id @default(uuid()) @db.Uuid
+  enrollmentId String     @map("enrollment_id") @db.Uuid
+  enrollment   Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+
+  scope    CompletionOverrideScope
+  /// The Lesson/CourseModule/Course id this override targets, depending on
+  /// `scope` — not a typed FK (the target table varies), the same
+  /// "loose reference by design" pattern Part 1 uses for `createdBy`/
+  /// `reviewedBy` actor references.
+  targetId String                   @map("target_id") @db.Uuid
+  action   CompletionOverrideAction
+
+  reason        String   @db.VarChar(1000)
+  actorId       String   @map("actor_id") @db.Uuid
+  previousValue Json?    @map("previous_value")
+  newValue      Json?    @map("new_value")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([enrollmentId, scope, targetId])
+  @@map("completion_overrides")
+}
+
+enum CompletionOverrideScope {
+  LESSON
+  MODULE
+  COURSE
+
+  @@map("completion_override_scope")
+}
+
+enum CompletionOverrideAction {
+  MARK_COMPLETE
+  RESET
+
+  @@map("completion_override_action")
 }

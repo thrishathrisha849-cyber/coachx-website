@@ -2,6 +2,7 @@ import { AppError } from '../utils/app-error';
 import { withTransaction } from '../database/transaction';
 import { normalizeDatabaseError } from '../database/db-error';
 import { recordAuditEvent } from '../database/audit-event.repository';
+import { beginIdempotentOperation } from '../database/idempotency.service';
 import { findCourseById } from './course.repository';
 import {
   findModuleById,
@@ -12,6 +13,7 @@ import {
   reorderModulePositions,
 } from './module.repository';
 import { toAdminModule } from './lms.serializers';
+import { scopedIdempotencyKey } from './lms-idempotency.util';
 import type { AdminCourseModule } from './lms.types';
 import type { TransactionClient } from '../database/transaction';
 
@@ -232,6 +234,74 @@ export async function archiveCourseModule(moduleId: string, actorId: string): Pr
 
     return toAdminModule(updated);
   });
+}
+
+/**
+ * FR-038 "Instructor-Controlled (instructor manually releases content)" /
+ * FR-034 "instructor release" — the WRITE half of `INSTRUCTOR_RELEASE`
+ * module gating. Added during the Phase 6 Part 2 database-verification
+ * pass: the prior implementation only ever READ `manuallyReleasedAt`
+ * (`access-evaluator.service.ts`'s `isModuleReleased`) — there was no way
+ * for anyone to actually set it, which left "instructor manually releases
+ * content" permanently unsatisfiable. Not blocked by any Part 3 entity or
+ * unresolved product decision, so implemented now rather than deferred.
+ *
+ * Idempotent (a repeat release call is a safe no-op — `manuallyReleasedAt`
+ * is set once and never overwritten to a later timestamp), transactional,
+ * and audited. Deliberately does NOT require a `reason` — unlike FR-113's
+ * completion overrides, FR-038 does not describe release as a correction
+ * needing justification, just an authoring/publishing action (the same
+ * tier as `postArchiveModule`/`postRestoreModule` above, neither of which
+ * require a reason either).
+ */
+export async function releaseModuleNow(moduleId: string, actorId: string, idempotencyKey?: string): Promise<AdminCourseModule> {
+  const key = scopedIdempotencyKey(actorId, idempotencyKey, moduleId);
+  const outcome = await beginIdempotentOperation<AdminCourseModule>('lms.module.release', key, { moduleId });
+
+  if (outcome.status === 'replayed') {
+    if (!outcome.response) throw AppError.internal('Idempotent module release has no cached response');
+    return outcome.response;
+  }
+  if (outcome.status === 'in-progress') {
+    throw AppError.conflict('A release request for this module is already in progress');
+  }
+
+  try {
+    const result = await withTransaction(async (tx) => {
+      const existing = await findModuleById(moduleId, tx);
+      if (!existing) throw AppError.notFound('Module not found');
+      if (existing.releaseRuleType !== 'INSTRUCTOR_RELEASE') {
+        throw AppError.badRequest(
+          `This module's release rule is ${existing.releaseRuleType}, not INSTRUCTOR_RELEASE — manual release does not apply`,
+        );
+      }
+
+      // Idempotent: already-released stays at its original timestamp —
+      // never bumped forward by a repeat call.
+      if (existing.manuallyReleasedAt) {
+        return toAdminModule(existing);
+      }
+
+      const updated = await updateModule(moduleId, { manuallyReleasedAt: new Date(), updatedBy: actorId }, tx).catch(
+        (error: unknown) => {
+          throw normalizeDatabaseError(error);
+        },
+      );
+
+      await recordAuditEvent(
+        { actorType: 'USER', actorId, action: 'lms.module.released', resourceType: 'course_module', resourceId: moduleId },
+        tx,
+      );
+
+      return toAdminModule(updated);
+    });
+
+    await outcome.complete(result);
+    return result;
+  } catch (error) {
+    await outcome.fail();
+    throw error;
+  }
 }
 
 export async function restoreCourseModule(moduleId: string, actorId: string): Promise<AdminCourseModule> {

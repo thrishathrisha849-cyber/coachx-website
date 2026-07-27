@@ -1,0 +1,92 @@
+import type { Request, Response } from 'express';
+import { buildSuccessResponse, HttpStatus, ERROR_CODES } from '@coachx/shared';
+import { asyncHandler } from '../utils/async-handler';
+import { AppError } from '../utils/app-error';
+import { selfEnroll, listMyEnrollments } from './enrollment.service';
+import { evaluateCourseAccess, evaluateLessonAccess } from './access-evaluator.service';
+import { getCourseProgressForLearner, updateLessonProgress } from './progress.service';
+import { completeLessonManually, maybeAutoCompleteFromProgress, recordActivityViewed } from './completion.service';
+import { getContinueLearning } from './continue-learning.service';
+import { findLessonById } from './lesson.repository';
+import { findModuleById } from './module.repository';
+import { findActivitiesByLesson } from './activity.repository';
+import { toPublicLessonDetail } from './lesson.serializers';
+
+/**
+ * Phase 6 Part 2B — learner-facing `/me/*` API (004 US1–US2, FR-020's
+ * "Continue Learning" CTA). EVERY handler here reads the acting user
+ * EXCLUSIVELY from `req.user!.id` (set by `authenticate` from the verified
+ * access token) — never from a request body/param `userId`, closing the
+ * "learner supplies another user's ID" IDOR path Part 2B/2C explicitly
+ * calls out. No route under this controller accepts a caller-supplied
+ * `userId` at all.
+ */
+
+export const postSelfEnroll = asyncHandler(async (req: Request, res: Response) => {
+  const enrollment = await selfEnroll(req.body.courseId, req.user!.id, req.header('Idempotency-Key'));
+  res.status(201).json(buildSuccessResponse(enrollment));
+});
+
+export const getMyEnrollments = asyncHandler(async (req: Request, res: Response) => {
+  const enrollments = await listMyEnrollments(req.user!.id);
+  res.status(200).json(buildSuccessResponse(enrollments));
+});
+
+export const getMyCourseAccess = asyncHandler(async (req: Request, res: Response) => {
+  const decision = await evaluateCourseAccess(req.user!.id, req.params.courseId);
+  res.status(200).json(buildSuccessResponse(decision));
+});
+
+export const getMyCourseProgress = asyncHandler(async (req: Request, res: Response) => {
+  const progress = await getCourseProgressForLearner(req.user!.id, req.params.courseId);
+  res.status(200).json(buildSuccessResponse(progress));
+});
+
+export const getMyContinueLearning = asyncHandler(async (req: Request, res: Response) => {
+  const result = await getContinueLearning(req.user!.id, req.params.courseId);
+  res.status(200).json(buildSuccessResponse(result));
+});
+
+/** GET /me/lessons/:lessonId — full lesson content, gated by the SAME access evaluator every other content path uses. */
+export const getMyLesson = asyncHandler(async (req: Request, res: Response) => {
+  const lesson = await findLessonById(req.params.lessonId);
+  if (!lesson || lesson.status !== 'PUBLISHED') throw AppError.notFound('Lesson not found');
+
+  // Resolve courseId via the lesson's own module — never trust a
+  // client-supplied courseId for an access decision (a mismatched
+  // courseId here would just 404, never grant access to the wrong course).
+  const module_ = await findModuleById(lesson.moduleId);
+  if (!module_) throw AppError.notFound('Lesson not found');
+
+  const access = await evaluateLessonAccess(req.user!.id, module_.courseId, lesson.id);
+  if (!access.allowed) {
+    throw new AppError(access.message, HttpStatus.FORBIDDEN, ERROR_CODES.FORBIDDEN, { reason: access.reason, ...access.detail });
+  }
+
+  const activities = await findActivitiesByLesson(lesson.id);
+  res.status(200).json(buildSuccessResponse(toPublicLessonDetail(lesson, activities)));
+});
+
+export const postMyLessonProgress = asyncHandler(async (req: Request, res: Response) => {
+  const updated = await updateLessonProgress(req.user!.id, req.params.lessonId, req.body, req.header('Idempotency-Key'));
+  await maybeAutoCompleteFromProgress(req.user!.id, req.params.lessonId, updated.percentage);
+  res.status(200).json(buildSuccessResponse(updated));
+});
+
+export const postMyLessonComplete = asyncHandler(async (req: Request, res: Response) => {
+  const result = await completeLessonManually(req.user!.id, req.params.lessonId, req.header('Idempotency-Key'));
+  res.status(200).json(buildSuccessResponse(result));
+});
+
+/**
+ * POST /me/activities/:activityId/viewed — the discrete, server-derived
+ * signal `ALL_ACTIVITIES_VIEWED` completion is built from (Correction 2 of
+ * the Part 2 correction pass). The client reports ONE activity being
+ * viewed; it never asserts "all activities viewed" as a boolean — the
+ * server aggregates across every activity in the lesson
+ * (`completion.service.ts`'s `areAllRequiredActivitiesViewed`).
+ */
+export const postMyActivityViewed = asyncHandler(async (req: Request, res: Response) => {
+  await recordActivityViewed(req.user!.id, req.params.activityId);
+  res.status(200).json(buildSuccessResponse({ viewed: true }));
+});

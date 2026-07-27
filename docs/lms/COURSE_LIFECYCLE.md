@@ -206,3 +206,7 @@ deliberate, not an oversight — see `docs/lms/DECISION_GATES.md`.
 - FR-015's four editorial sub-review-stage names (Content creation/
   Internal review/Instructor review/QA review) are not separately
   tracked — see the reconciliation note above.
+
+## Phase 6 Part 2 update
+
+The "Configuration vs. enforcement" split this file originally documented for `CourseModule.releaseRuleType`/`releaseRuleValue`/`completionRuleType` is now RESOLVED — Part 2's `access-evaluator.service.ts` and `completion.service.ts` read and enforce these exact fields at runtime. See `docs/lms/PREREQUISITES_AND_RELEASE.md` and `docs/lms/COMPLETION_ENGINE.md` for the full enforcement design; `DECISION_GATES.md` gate #18 is updated accordingly. This file's own Course-status state machine (`course-lifecycle.policy.ts`) is UNCHANGED by Part 2 — Enrollment gets its own, separate state machine (`enrollment.policy.ts`, see `ENROLLMENT_LIFECYCLE.md`), not a reuse of this one, since a Course's editorial workflow and a learner's access grant are genuinely different state machines with different actors and different terminal states.

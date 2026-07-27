@@ -111,3 +111,15 @@ script can't import from `backend/` (separate npm workspace, must run
 standalone via `tsx`). Both lists were updated together in this phase's
 diff — verified by eye, not by an automated drift check (same
 limitation as gate #16).
+
+## Phase 6 Part 2 addendum — no new permissions added
+
+Every new Lesson/Activity/Enrollment endpoint reuses an EXISTING Part 1 permission rather than inventing new ones:
+
+- Lesson/Activity admin+instructor CRUD → `course.module.manage` (a lesson/activity is content belonging to a module; not a materially different privilege at this phase's granularity).
+- Enrollment admin actions (grant/suspend/reactivate/revoke/extend-access/override-complete/reset-progress) → `course.manageInstructors` (the existing "administers who has privileged access to a course" tier).
+- Student `/me/*` routes → `course.view` (the same baseline every authenticated consumer role already holds); the SPECIFIC course/lesson a caller may act on is then gated by the access evaluator inside the controller, not by RBAC alone — RBAC answers "is this a legitimate API consumer," the access evaluator answers "does THIS user have access to THIS content."
+
+No `RoleName` was added or changed. `rbac.constants.ts` and `database/seeds/rbac.seed.ts` are both UNCHANGED by Part 2 — verified via `git diff` showing zero modifications to either file during this phase.
+
+Instructor-scoped enrollment/completion routes additionally enforce course ownership (`assertInstructorOwnsCourse`/`assertInstructorOwnsModule`/`assertInstructorOwnsLesson`) exactly as Part 1's module/lesson routes already did — an instructor holding `course.module.manage` still cannot touch another instructor's course, verified by the integration suite's IDOR scenarios.

@@ -160,3 +160,19 @@ have even a placeholder FK-preparation column anywhere in Part 1's
 models — a future `Lesson.moduleId` FK will simply reference the
 already-existing `CourseModule.id`, which needs no preparation on this
 side.
+
+## Phase 6 Part 2 models (additive migration `20260727140000_add_lms_lessons_activities_enrollment_progress`)
+
+`Lesson` (FK to `CourseModule`), `LearningActivity` (FK to `Lesson`), `Enrollment` (FK to `User` + `Course`), `LessonProgress` (FK to `Enrollment` + `Lesson`, `@@unique([enrollmentId, lessonId])`), `CompletionOverride` (FK to `Enrollment`). `CourseModule` gained one additive column, `manuallyReleasedAt`, and a `lessons` back-relation; no Part 1 column was altered, renamed, or dropped. `Course`/`User` each gained an `enrollments`/`enrollments` back-relation array only.
+
+`Course`/`Module`/`Lesson`/`Program`/`Path` progress are explicitly NOT separately stored tables — see `docs/lms/PROGRESS_ENGINE.md` for why `LessonProgress` is the only stored progress table and everything above it is derived at read time.
+
+One hand-added partial unique index (Prisma DSL cannot express a `WHERE`-scoped constraint, same limitation Part 1 hit for `course_instructors_one_primary_per_course`): `enrollments_one_active_per_user_course` on `(user_id, course_id) WHERE status IN ('PENDING','ACTIVE','SUSPENDED')` — allows re-enrollment after a CANCELLED/REVOKED/EXPIRED/COMPLETED enrollment while preventing two simultaneously-open enrollments for the same learner/course pair.
+
+Full field-by-field rationale: `docs/lms/LESSON_ARCHITECTURE.md`, `LEARNING_ACTIVITIES.md`, `ENROLLMENT_LIFECYCLE.md`.
+
+## Database verification pass — schema/index status
+
+The `enrollments_one_active_per_user_course` predicate above (`WHERE status IN ('PENDING','ACTIVE','SUSPENDED')`) was re-reviewed against `enrollment.policy.ts`'s centralized `ENROLLMENT_VALID_TRANSITIONS` state machine during this pass and confirmed to match exactly — every status the policy treats as "open" (`PENDING`/`ACTIVE`/`SUSPENDED`) is in the predicate; every status the policy treats as terminal-or-freed (`EXPIRED`/`CANCELLED`/`COMPLETED`/`REVOKED`) is correctly excluded. No predicate/lifecycle mismatch was found, so no new correction migration was needed for it.
+
+**This confirmation is a static code/schema review only.** The correction pass's own instruction was to prove this against a REAL PostgreSQL database (create two enrollments, observe the constraint violation, test concurrent creation) — that live verification could not be performed because PostgreSQL/Docker are unavailable in this sandbox (see `docs/lms/TESTING.md`'s "Database verification pass" section). The migration SQL itself (`CREATE UNIQUE INDEX ... WHERE "status" IN (...)`) is valid, standard PostgreSQL partial-index syntax and has been reviewed character-by-character, but has never been executed against a running Postgres instance in this session.
