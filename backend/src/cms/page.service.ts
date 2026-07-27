@@ -2,13 +2,13 @@ import { AppError } from '../utils/app-error';
 import { withTransaction } from '../database/transaction';
 import { normalizeDatabaseError } from '../database/db-error';
 import { recordAuditEvent } from '../database/audit-event.repository';
-import { generateSecureToken } from '../auth/secure-token.util';
+import { generateSecureToken, hashToken } from '../auth/secure-token.util';
 import { parsePaginationParams, buildPaginationMeta, type RawPaginationQuery } from '../database/pagination';
 import type { PaginationMeta } from '@coachx/shared';
 import { validateBlockData } from './block-schemas';
 import {
   findPublishedPageBySlug,
-  findPageByPreviewToken,
+  findPageByPreviewTokenHash,
   findPageById,
   findPagesByTemplate,
   createPage,
@@ -25,7 +25,7 @@ const PREVIEW_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours (FR-105: preview l
 function toRenderedPage(page: {
   id: string; slug: string; language: string; template: string; status: string; title: string;
   seoTitle: string | null; seoDescription: string | null; canonicalUrl: string | null; ogImageUrl: string | null;
-  noIndex: boolean; tags: string[]; headerVisible: boolean; footerVisible: boolean; updatedAt: Date;
+  noIndex: boolean; tags: string[]; headerVisible: boolean; footerVisible: boolean; publishAt: Date | null; updatedAt: Date;
   blocks: Array<{ id: string; type: string; order: number; visible: boolean; data: unknown }>;
 }): RenderedPage {
   return {
@@ -46,6 +46,7 @@ function toRenderedPage(page: {
     headerVisible: page.headerVisible,
     footerVisible: page.footerVisible,
     blocks: page.blocks.filter((b) => b.visible).map((b) => ({ id: b.id, type: b.type, order: b.order, data: b.data })),
+    publishAt: page.publishAt,
     updatedAt: page.updatedAt,
   };
 }
@@ -62,7 +63,7 @@ export async function getPublicPage(
   previewToken?: string,
 ): Promise<RenderedPage> {
   if (previewToken) {
-    const page = await findPageByPreviewToken(previewToken);
+    const page = await findPageByPreviewTokenHash(hashToken(previewToken));
     if (!page || page.slug !== slug || !page.previewExpiresAt || page.previewExpiresAt < new Date()) {
       throw AppError.notFound('Page not found');
     }
@@ -250,7 +251,7 @@ export async function generatePreviewLink(pageId: string, actorId: string): Prom
   const token = generateSecureToken();
   const expiresAt = new Date(Date.now() + PREVIEW_TOKEN_TTL_MS);
 
-  await updatePage(pageId, { previewToken: token, previewExpiresAt: expiresAt, updatedBy: actorId });
+  await updatePage(pageId, { previewTokenHash: hashToken(token), previewExpiresAt: expiresAt, updatedBy: actorId });
 
   return { token, expiresAt };
 }

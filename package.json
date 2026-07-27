@@ -24,7 +24,7 @@
     "build:admin": "npm run build --workspace=admin",
     "build": "npm run build:shared && npm run db:generate && npm run build:backend && npm run build:frontend && npm run build:admin",
     "lint": "npm run lint --workspace=backend && npm run lint --workspace=frontend && npm run lint --workspace=admin",
-    "test": "npm run db:generate && npm run test --workspace=backend",
+    "test": "npm run db:generate && npm run test --workspace=backend && npm run test --workspace=frontend",
     "test:watch": "npm run test:watch --workspace=backend",
     "test:coverage": "npm run test:coverage --workspace=backend",
     "db:generate": "npm run generate --workspace=database",

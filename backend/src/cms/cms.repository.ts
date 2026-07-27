@@ -22,8 +22,9 @@ export function findPageById(id: string, tx?: TransactionClient) {
   return db(tx).page.findUnique({ where: { id }, include: { blocks: { orderBy: { order: 'asc' } } } });
 }
 
-export function findPageByPreviewToken(token: string, tx?: TransactionClient) {
-  return db(tx).page.findUnique({ where: { previewToken: token }, include: { blocks: { orderBy: { order: 'asc' } } } });
+/** `tokenHash` — caller hashes the raw token first (see page.service.ts). */
+export function findPageByPreviewTokenHash(tokenHash: string, tx?: TransactionClient) {
+  return db(tx).page.findUnique({ where: { previewTokenHash: tokenHash }, include: { blocks: { orderBy: { order: 'asc' } } } });
 }
 
 /** `tag` filters to pages whose `tags` array contains the given value (002 FR-049 category/tag filter). */

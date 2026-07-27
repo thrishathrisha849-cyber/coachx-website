@@ -1,7 +1,7 @@
 /**
  * Frontend-local mirror of the backend's CMS response shapes
  * (`backend/src/cms/cms.types.ts`). Kept separate rather than shared
- * via `@coachx/shared` since these are Phase 5 (Part 1)-specific and
+ * via `@coachx/shared` since these are Phase 5-specific and
  * `@coachx/shared` is deliberately reserved for cross-cutting,
  * domain-agnostic primitives (see `shared/src/types/index.ts`'s own
  * scope note from Phase 1).
@@ -32,6 +32,7 @@ export interface CmsPage {
   headerVisible: boolean;
   footerVisible: boolean;
   blocks: CmsBlock[];
+  publishAt: string | null;
   updatedAt: string;
 }
 
@@ -61,10 +62,16 @@ export interface FaqCategoryGroup {
   items: Array<{ id: string; question: string; answer: string }>;
 }
 
+export interface HighlightSegment {
+  text: string;
+  highlight: boolean;
+}
+
 export interface SearchResult {
   type: 'page' | 'faq';
   id: string;
   title: string;
   url: string;
-  excerpt: string;
+  excerpt: HighlightSegment[];
+  score: number;
 }

@@ -93,6 +93,15 @@ export const newsletterUnsubscribeSchema = z.object({
   }),
 });
 
+export const checkRedirectSchema = z.object({
+  query: z.object({
+    // Root-relative only — never a full URL, closing the same open-
+    // redirect class of risk `frontend/src/utils/url.ts`'s
+    // `isExternalUrl` guards against on the frontend.
+    path: z.string().regex(/^\/[^\s]*$/, 'path must be a root-relative path').max(500),
+  }),
+});
+
 export const searchSchema = z.object({
   query: z.object({
     q: z.string().trim().min(2).max(100),

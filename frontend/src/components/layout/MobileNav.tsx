@@ -1,6 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import type { NavTreeNode } from '@/types/cms.types';
+import { useFocusTrap } from '@/hooks/useFocusTrap';
+import { SAFE_EXTERNAL_REL } from '@/utils/url';
 
 interface MobileNavProps {
   items: NavTreeNode[];
@@ -8,12 +10,18 @@ interface MobileNavProps {
   onClose: () => void;
 }
 
+const DIALOG_TITLE_ID = 'mobile-nav-title';
+
 /**
  * 002 FR-003: full-screen/side-drawer mobile menu — primary nav,
  * membership CTA, login CTA, social/contact/legal links, background
- * scroll disabled while open.
+ * scroll disabled while open. FR-108: focus trapped within the dialog
+ * while open, focus restored to the trigger button on close.
  */
 export function MobileNav({ items, open, onClose }: MobileNavProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(containerRef, open);
+
   useEffect(() => {
     if (open) {
       document.body.style.overflow = 'hidden';
@@ -37,9 +45,17 @@ export function MobileNav({ items, open, onClose }: MobileNavProps) {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-white dark:bg-slate-950 md:hidden" role="dialog" aria-modal="true">
+    <div
+      ref={containerRef}
+      className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-slate-950 md:hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={DIALOG_TITLE_ID}
+    >
       <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
-        <span className="text-lg font-semibold text-brand-600 dark:text-brand-400">Menu</span>
+        <span id={DIALOG_TITLE_ID} className="text-lg font-semibold text-brand-600 dark:text-brand-400">
+          Menu
+        </span>
         <button
           type="button"
           onClick={onClose}
@@ -50,12 +66,14 @@ export function MobileNav({ items, open, onClose }: MobileNavProps) {
         </button>
       </div>
 
-      <nav className="flex flex-col gap-1 overflow-y-auto p-4">
+      <nav className="flex flex-col gap-1 overflow-y-auto p-4" aria-label="Mobile">
         {items.map((item) => (
           <div key={item.id}>
             {item.isExternal ? (
               <a
                 href={item.url}
+                target="_blank"
+                rel={SAFE_EXTERNAL_REL}
                 className="block rounded-md px-3 py-3 text-base font-medium text-slate-800 hover:bg-slate-100 dark:text-slate-100 dark:hover:bg-slate-800"
               >
                 {item.label}

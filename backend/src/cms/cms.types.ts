@@ -27,5 +27,7 @@ export interface RenderedPage {
     order: number;
     data: unknown;
   }>;
+  /** Phase 5 Part 2 — surfaced for Blog's "Publish date" requirement and Article schema's `datePublished`. */
+  publishAt: Date | null;
   updatedAt: Date;
 }

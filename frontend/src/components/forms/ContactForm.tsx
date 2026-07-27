@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { submitContactForm } from '@/api/cms.api';
 import type { NormalizedApiError } from '@/api/client';
+import { HoneypotField } from './HoneypotField';
 
 const DEPARTMENTS = [
   { value: 'GENERAL_ENQUIRY', label: 'General Enquiry' },
@@ -37,6 +38,7 @@ export function ContactForm() {
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [status, setStatus] = useState<'idle' | 'submitting' | 'success' | 'error'>('idle');
   const [serverError, setServerError] = useState<string | null>(null);
+  const [honeypot, setHoneypot] = useState('');
 
   function validate(): boolean {
     const errors: Partial<Record<keyof FormState, string>> = {};
@@ -65,6 +67,7 @@ export function ContactForm() {
         department: form.department,
         message: form.message.trim(),
         consent: true,
+        website: honeypot,
       });
       setStatus('success');
       setForm(initialState);
@@ -84,6 +87,7 @@ export function ContactForm() {
 
   return (
     <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
+      <HoneypotField value={honeypot} onChange={setHoneypot} />
       <div>
         <label htmlFor="contact-name" className="block text-sm font-medium text-slate-700 dark:text-slate-200">
           Full name <span aria-hidden="true">*</span>

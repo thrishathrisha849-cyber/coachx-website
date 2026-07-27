@@ -114,6 +114,9 @@ afterAll(async () => {
   if (dbAvailable) {
     const db = getPrismaClient();
     await db.page.deleteMany({});
+    await db.navigationItem.deleteMany({});
+    await db.announcement.deleteMany({});
+    await db.redirect.deleteMany({});
     await db.contactSubmission.deleteMany({});
     await db.newsletterSubscriber.deleteMany({});
     await db.consentRecord.deleteMany({});
@@ -390,6 +393,241 @@ describe('Search (002 FR-009)', () => {
   it('rejects a query shorter than 2 characters', async () => {
     if (skip()) return;
     const response = await request(app).get('/api/v1/cms/search?q=a');
+    expect(response.status).toBe(400);
+  });
+
+  it('never leaks a DRAFT page in results, even when its title matches exactly', async () => {
+    if (skip()) return;
+
+    const { accessToken } = await createContentManagerAndLogin(uniqueEmail('search-draft-admin'));
+    const uniqueMarker = `DraftMarker${Date.now()}`;
+    await request(app)
+      .post('/api/v1/cms/admin/pages')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ slug: uniqueSlug('draft-page'), title: uniqueMarker, blocks: [] });
+    // Deliberately left in DRAFT status — never advanced through the workflow.
+
+    const response = await request(app).get(`/api/v1/cms/search?q=${uniqueMarker}`);
+    expect(response.status).toBe(200);
+    expect(response.body.data.some((r: any) => r.title === uniqueMarker)).toBe(false);
+  });
+
+  it('paginates results and reports correct meta', async () => {
+    if (skip()) return;
+
+    const { accessToken } = await createContentManagerAndLogin(uniqueEmail('search-page-admin'));
+    const marker = `PaginateMarker${Date.now()}`;
+
+    for (let i = 0; i < 3; i++) {
+      const createRes = await request(app)
+        .post('/api/v1/cms/admin/pages')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ slug: uniqueSlug(`paginate-${i}`), title: `${marker} ${i}`, blocks: [] });
+      for (const status of ['REVIEW', 'APPROVED', 'PUBLISHED']) {
+        await request(app)
+          .patch(`/api/v1/cms/admin/pages/${createRes.body.data.id}/status`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          .send({ status });
+      }
+    }
+
+    const response = await request(app).get(`/api/v1/cms/search?q=${marker}&page=1&pageSize=2`);
+    expect(response.status).toBe(200);
+    expect(response.body.data).toHaveLength(2);
+    expect(response.body.meta.totalItems).toBe(3);
+    expect(response.body.meta.totalPages).toBe(2);
+  });
+
+  it('ranks an exact title match above a partial/contains match', async () => {
+    if (skip()) return;
+
+    const { accessToken } = await createContentManagerAndLogin(uniqueEmail('search-rank-admin'));
+    const marker = `RankMarker${Date.now()}`;
+
+    const exactRes = await request(app)
+      .post('/api/v1/cms/admin/pages')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ slug: uniqueSlug('rank-exact'), title: marker, blocks: [] });
+    const containsRes = await request(app)
+      .post('/api/v1/cms/admin/pages')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ slug: uniqueSlug('rank-contains'), title: `Something About ${marker} Here`, blocks: [] });
+
+    for (const id of [exactRes.body.data.id, containsRes.body.data.id]) {
+      for (const status of ['REVIEW', 'APPROVED', 'PUBLISHED']) {
+        await request(app)
+          .patch(`/api/v1/cms/admin/pages/${id}/status`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          .send({ status });
+      }
+    }
+
+    const response = await request(app).get(`/api/v1/cms/search?q=${marker}`);
+    expect(response.status).toBe(200);
+    expect(response.body.data[0].title).toBe(marker);
+  });
+});
+
+describe('Blog category/tag filter (002 FR-049)', () => {
+  it('filters blog listing results by tag', async () => {
+    if (skip()) return;
+
+    const { accessToken } = await createContentManagerAndLogin(uniqueEmail('blog-tag-admin'));
+    const tag = `UniqueTag${Date.now()}`;
+
+    const taggedRes = await request(app)
+      .post('/api/v1/cms/admin/pages')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ slug: uniqueSlug('tagged-post'), title: 'Tagged Post', template: 'BLOG_POST', tags: [tag], blocks: [] });
+    const untaggedRes = await request(app)
+      .post('/api/v1/cms/admin/pages')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ slug: uniqueSlug('untagged-post'), title: 'Untagged Post', template: 'BLOG_POST', blocks: [] });
+
+    for (const id of [taggedRes.body.data.id, untaggedRes.body.data.id]) {
+      for (const status of ['REVIEW', 'APPROVED', 'PUBLISHED']) {
+        await request(app)
+          .patch(`/api/v1/cms/admin/pages/${id}/status`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          .send({ status });
+      }
+    }
+
+    const response = await request(app).get(`/api/v1/cms/blog?tag=${tag}`);
+    expect(response.status).toBe(200);
+    expect(response.body.data.every((p: any) => p.tags.includes(tag))).toBe(true);
+    expect(response.body.data.some((p: any) => p.title === 'Untagged Post')).toBe(false);
+  });
+});
+
+describe('Newsletter unsubscribe (Phase 5 Part 2 safe unsubscribe)', () => {
+  it('unsubscribes via the token embedded in the confirmation email, and rejects an invalid token', async () => {
+    if (skip()) return;
+
+    const email = uniqueEmail('unsub');
+    await request(app).post('/api/v1/newsletter/subscribe').send({ email, consent: true });
+
+    const sentMessage = emailAdapter.sent.find((m: any) => m.to === email.toLowerCase());
+    const rawToken = sentMessage?.text.match(/token=(\S+)/)?.[1];
+    expect(rawToken).toBeDefined();
+
+    const invalidRes = await request(app).post('/api/v1/newsletter/unsubscribe').query({ token: 'not-a-real-token' });
+    expect(invalidRes.status).toBe(404);
+
+    const unsubRes = await request(app).post('/api/v1/newsletter/unsubscribe').query({ token: rawToken });
+    expect(unsubRes.status).toBe(200);
+
+    const db = getPrismaClient();
+    const subscriber = await db.newsletterSubscriber.findUnique({ where: { email: email.toLowerCase() } });
+    expect(subscriber.unsubscribedAt).not.toBeNull();
+
+    // Idempotent: unsubscribing again with the same token still succeeds.
+    const secondRes = await request(app).post('/api/v1/newsletter/unsubscribe').query({ token: rawToken });
+    expect(secondRes.status).toBe(200);
+  });
+
+  it('rejects an unsubscribe attempt via a guessed email-based link (no email-only endpoint exists)', async () => {
+    if (skip()) return;
+    // There is no email-parameter variant of this endpoint — only
+    // ?token=. Confirms the safe-unsubscribe design: an attacker who
+    // merely knows someone's email cannot unsubscribe them.
+    const response = await request(app).post('/api/v1/newsletter/unsubscribe').query({ token: '' });
+    expect(response.status).toBe(400); // fails validation (token required, min length 1)
+  });
+});
+
+describe('Spam-protection honeypot (Phase 5 Part 2)', () => {
+  it('silently no-ops a contact submission with a filled honeypot field (no record created, generic success response)', async () => {
+    if (skip()) return;
+
+    const email = uniqueEmail('honeypot-contact');
+    const response = await request(app).post('/api/v1/contact').send({
+      name: 'Bot',
+      email,
+      department: 'GENERAL_ENQUIRY',
+      message: 'This is definitely a bot submission attempt.',
+      consent: true,
+      website: 'http://spam.example.com', // honeypot filled — a real user never does this
+    });
+
+    // Same success response a legitimate submission gets — a bot cannot distinguish rejection from success.
+    expect(response.status).toBe(200);
+
+    const db = getPrismaClient();
+    const submission = await db.contactSubmission.findFirst({ where: { email: email.toLowerCase() } });
+    expect(submission).toBeNull();
+    expect(emailAdapter.sent.some((m: any) => m.to === email)).toBe(false);
+  });
+
+  it('silently no-ops a newsletter subscription with a filled honeypot field', async () => {
+    if (skip()) return;
+
+    const email = uniqueEmail('honeypot-newsletter');
+    const response = await request(app)
+      .post('/api/v1/newsletter/subscribe')
+      .send({ email, consent: true, website: 'http://spam.example.com' });
+
+    expect(response.status).toBe(200);
+
+    const db = getPrismaClient();
+    const subscriber = await db.newsletterSubscriber.findUnique({ where: { email: email.toLowerCase() } });
+    expect(subscriber).toBeNull();
+  });
+});
+
+describe('SEO validation (Phase 5 Part 2 §"SEO": duplicate titles/canonicals, invalid slugs)', () => {
+  it('detects two published pages sharing the same effective title', async () => {
+    if (skip()) return;
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { validateSeoAcrossPublishedPages } = require('../../src/cms/seo-validation.service');
+    const { accessToken } = await createContentManagerAndLogin(uniqueEmail('seo-dup-admin'));
+    const duplicateTitle = `Duplicate Title ${Date.now()}`;
+
+    for (const suffix of ['a', 'b']) {
+      const createRes = await request(app)
+        .post('/api/v1/cms/admin/pages')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ slug: uniqueSlug(`seo-dup-${suffix}`), title: duplicateTitle, blocks: [] });
+      for (const status of ['REVIEW', 'APPROVED', 'PUBLISHED']) {
+        await request(app)
+          .patch(`/api/v1/cms/admin/pages/${createRes.body.data.id}/status`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          .send({ status });
+      }
+    }
+
+    const issues = await validateSeoAcrossPublishedPages();
+    const found = issues.find((i: any) => i.type === 'duplicate_title' && i.value === duplicateTitle.toLowerCase());
+    expect(found).toBeDefined();
+    expect(found.pageIds.length).toBe(2);
+  });
+});
+
+describe('Redirects (002 FR-092, Phase 5 Part 2)', () => {
+  it('resolves a configured redirect', async () => {
+    if (skip()) return;
+
+    const db = getPrismaClient();
+    const fromPath = `/${uniqueSlug('old-path')}`;
+    await db.redirect.create({ data: { fromPath, toPath: '/new-path', statusCode: 301 } });
+
+    const response = await request(app).get('/api/v1/cms/redirects/check').query({ path: fromPath });
+    expect(response.status).toBe(200);
+    expect(response.body.data).toEqual({ toPath: '/new-path', statusCode: 301 });
+  });
+
+  it('returns 404 for a path with no configured redirect', async () => {
+    if (skip()) return;
+    const response = await request(app).get('/api/v1/cms/redirects/check').query({ path: '/no-such-redirect-path' });
+    expect(response.status).toBe(404);
+  });
+
+  it('rejects a non-root-relative path (open-redirect guard)', async () => {
+    if (skip()) return;
+    const response = await request(app)
+      .get('/api/v1/cms/redirects/check')
+      .query({ path: 'https://evil.example.com' });
     expect(response.status).toBe(400);
   });
 });

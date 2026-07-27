@@ -31,9 +31,22 @@ Resources also need the same tag vocabulary — none of which exist yet.
 
 **`PageBlock.data` is a single `Json` column with one Zod schema per
 block type at the application layer** (`backend/src/cms/block-schemas.ts`),
-not 20 near-empty tables or one giant nullable-everything table. FR-085's
-20 block types genuinely have different field shapes; this is the
-standard pattern for that situation.
+not 20+ near-empty tables or one giant nullable-everything table. FR-085's
+block types (plus Phase 5 Part 2's two additions, `GALLERY` and
+`DOWNLOAD`, requested explicitly beyond the spec's own list) genuinely
+have different field shapes; this is the standard pattern for that
+situation. `GALLERY`/`DOWNLOAD` were added as their own enum values
+(not folded into `CUSTOM_HTML`) specifically because each has its own
+validated, non-arbitrary-HTML data shape — an image-URL array and a
+file-link array, respectively — unlike `CUSTOM_HTML`, which remains
+deliberately restrictive pending a sanitization decision.
+
+**`NewsletterSubscriber.unsubscribeTokenHash` (Part 2)** follows the
+exact generate-raw/store-hash pattern Phase 4 already established for
+password-reset and email-verification tokens — no new hashing
+convention was invented. Deliberately NOT email-based: an
+email-parameter-only unsubscribe endpoint would let anyone unsubscribe
+anyone else they merely know the email address of.
 
 **`PageVersion` snapshots the full page+blocks JSON on every
 publish-affecting update.** Non-destructive, mirroring Constitution
@@ -41,12 +54,24 @@ Article IV's Historical Immutability principle (already established
 platform-wide) — no version is ever overwritten, only appended.
 
 **No separate `RefreshToken`-style split for preview links.**
-`Page.previewToken`/`previewExpiresAt` live directly on `Page` — a page
-has at most one active preview link at a time (generating a new one
-overwrites the old), which is the correct behavior for FR-105's
+`Page.previewTokenHash`/`previewExpiresAt` live directly on `Page` — a
+page has at most one active preview link at a time (generating a new
+one overwrites the old), which is the correct behavior for FR-105's
 "admin preview links expire."
 
-## What is deliberately NOT modeled in Part 1
+**Preview tokens are hashed at rest (Part 3 hardening fix).** The
+field was originally named `previewToken` and stored the raw,
+guessable-if-leaked value directly — an inconsistency with the
+hashed-token pattern used everywhere else (`PasswordResetToken`,
+`EmailVerificationToken`, `NewsletterSubscriber.unsubscribeTokenHash`).
+Found during Part 3's Security Audit ("preview leakage" review) and
+fixed the same way as the others: `generatePreviewLink()` still
+returns the raw token to the caller (embedded in the preview URL), but
+only `hashToken(raw)` is persisted, and lookup hashes the incoming
+token before querying (`findPageByPreviewTokenHash`). Migration:
+`database/prisma/migrations/*_hash_cms_preview_token/`.
+
+## What is deliberately NOT modeled in Phase 5
 
 See `docs/public-site/DECISION_GATES.md` for the full list and reasons:
 `Lead`, `Campaign`, `Checkout Session`/`Abandoned Checkout`,

@@ -11,3 +11,19 @@
     @apply bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100;
   }
 }
+
+/* 002 FR-108: reduced-motion support — applies platform-wide (header
+   shrink transitions, dropdown/animate-pulse skeletons, etc.) rather
+   than requiring every component to remember to check the media query
+   itself. Near-zero durations (not literally 0) to avoid breaking
+   transition-end-dependent logic, while making motion imperceptible. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

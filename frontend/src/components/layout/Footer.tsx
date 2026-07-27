@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { env } from '@/config/env';
-import { fetchNavigation } from '@/api/cms.api';
+import { useNavigation } from '@/hooks/useNavigation';
 import type { NavTreeNode } from '@/types/cms.types';
 import { NewsletterForm } from '@/components/forms/NewsletterForm';
+import { SAFE_EXTERNAL_REL } from '@/utils/url';
 
 /**
  * 002 FR-008: Brand/Platform/Resources/Company/Legal sections + footer
@@ -14,13 +14,7 @@ import { NewsletterForm } from '@/components/forms/NewsletterForm';
  * this item belong to" concerns).
  */
 export function Footer() {
-  const [items, setItems] = useState<NavTreeNode[]>([]);
-
-  useEffect(() => {
-    fetchNavigation('footer')
-      .then(setItems)
-      .catch(() => setItems([]));
-  }, []);
+  const items = useNavigation('footer');
 
   const columns = new Map<string, NavTreeNode[]>();
   for (const item of items) {
@@ -50,7 +44,12 @@ export function Footer() {
                 {columnItems.map((item) => (
                   <li key={item.id}>
                     {item.isExternal ? (
-                      <a href={item.url} className="text-sm text-slate-600 hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-400">
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel={SAFE_EXTERNAL_REL}
+                        className="text-sm text-slate-600 hover:text-brand-600 dark:text-slate-400 dark:hover:text-brand-400"
+                      >
                         {item.label}
                       </a>
                     ) : (

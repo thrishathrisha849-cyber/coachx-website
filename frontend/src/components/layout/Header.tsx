@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTheme } from '@/context/theme.context';
 import { env } from '@/config/env';
-import { fetchNavigation } from '@/api/cms.api';
-import type { NavTreeNode } from '@/types/cms.types';
+import { useNavigation } from '@/hooks/useNavigation';
+import { SAFE_EXTERNAL_REL } from '@/utils/url';
 import { MobileNav } from './MobileNav';
 
 /**
@@ -19,16 +19,10 @@ import { MobileNav } from './MobileNav';
  */
 export function Header() {
   const { theme, toggleTheme } = useTheme();
-  const [navItems, setNavItems] = useState<NavTreeNode[]>([]);
+  const navItems = useNavigation('header');
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetchNavigation('header')
-      .then(setNavItems)
-      .catch(() => setNavItems([]));
-  }, []);
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 8);
@@ -63,6 +57,8 @@ export function Header() {
               {item.isExternal ? (
                 <a
                   href={item.url}
+                  target="_blank"
+                  rel={SAFE_EXTERNAL_REL}
                   className="rounded-md px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
                 >
                   {item.label}

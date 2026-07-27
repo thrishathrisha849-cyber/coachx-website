@@ -3,6 +3,7 @@ import { Header } from './Header';
 import { Footer } from './Footer';
 import { AnnouncementBar } from './AnnouncementBar';
 import { CookieConsentBanner } from './CookieConsentBanner';
+import { OrganizationSchema } from './OrganizationSchema';
 import { ErrorBoundary } from '@/components/system/ErrorBoundary';
 
 /**
@@ -14,6 +15,7 @@ import { ErrorBoundary } from '@/components/system/ErrorBoundary';
 export function MainLayout() {
   return (
     <div className="flex min-h-screen flex-col">
+      <OrganizationSchema />
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-brand-600 focus:px-4 focus:py-2 focus:text-white"

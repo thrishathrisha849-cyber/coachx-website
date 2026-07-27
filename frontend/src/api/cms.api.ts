@@ -1,4 +1,4 @@
-import type { ApiSuccessResponse, PaginatedResponse } from '@coachx/shared';
+import type { ApiSuccessResponse, PaginatedResponse, PaginationMeta } from '@coachx/shared';
 import { apiClient } from './client';
 import type { CmsPage, NavTreeNode, Announcement, FaqCategoryGroup, SearchResult } from '@/types/cms.types';
 
@@ -9,9 +9,16 @@ export async function fetchPageBySlug(slug: string, previewToken?: string): Prom
   return data.data;
 }
 
-export async function fetchBlogList(page = 1, pageSize = 10): Promise<{ items: CmsPage[]; total: number }> {
-  const { data } = await apiClient.get<PaginatedResponse<CmsPage>>('/cms/blog', { params: { page, pageSize } });
-  return { items: data.data, total: data.meta.totalItems };
+/** 002 FR-049: category/tag filter + pagination. */
+export async function fetchBlogList(
+  page = 1,
+  pageSize = 10,
+  tag?: string,
+): Promise<{ items: CmsPage[]; meta: PaginationMeta }> {
+  const { data } = await apiClient.get<PaginatedResponse<CmsPage>>('/cms/blog', {
+    params: { page, pageSize, ...(tag ? { tag } : {}) },
+  });
+  return { items: data.data, meta: data.meta };
 }
 
 export async function fetchNavigation(location: 'header' | 'footer' | 'mobile'): Promise<NavTreeNode[]> {
@@ -29,9 +36,16 @@ export async function fetchFaqs(): Promise<FaqCategoryGroup[]> {
   return data.data;
 }
 
-export async function fetchSearch(query: string): Promise<SearchResult[]> {
-  const { data } = await apiClient.get<ApiSuccessResponse<SearchResult[]>>('/cms/search', { params: { q: query } });
-  return data.data;
+/** 002 FR-009: paginated, ranked, highlighted search results. */
+export async function fetchSearch(
+  query: string,
+  page = 1,
+  pageSize = 10,
+): Promise<{ items: SearchResult[]; meta: PaginationMeta }> {
+  const { data } = await apiClient.get<PaginatedResponse<SearchResult>>('/cms/search', {
+    params: { q: query, page, pageSize },
+  });
+  return { items: data.data, meta: data.meta };
 }
 
 export async function submitContactForm(input: {
@@ -41,10 +55,34 @@ export async function submitContactForm(input: {
   department: string;
   message: string;
   consent: true;
+  /** Honeypot spam-protection field — always left empty by real users. */
+  website?: string;
 }): Promise<void> {
   await apiClient.post('/contact', input);
 }
 
-export async function subscribeToNewsletter(email: string): Promise<void> {
-  await apiClient.post('/newsletter/subscribe', { email, consent: true });
+export async function subscribeToNewsletter(email: string, honeypotValue?: string): Promise<void> {
+  await apiClient.post('/newsletter/subscribe', { email, consent: true, website: honeypotValue });
+}
+
+export async function unsubscribeFromNewsletter(token: string): Promise<void> {
+  await apiClient.post('/newsletter/unsubscribe', undefined, { params: { token } });
+}
+
+/**
+ * 002 FR-092 redirect check (Phase 5 Part 2). Returns `null` when no
+ * redirect is configured for `path` — a 404 here is an expected,
+ * common outcome (most unknown paths genuinely have no redirect), not
+ * an error condition, so this resolves to `null` rather than throwing.
+ */
+export async function checkRedirect(path: string): Promise<{ toPath: string; statusCode: number } | null> {
+  try {
+    const { data } = await apiClient.get<ApiSuccessResponse<{ toPath: string; statusCode: number }>>(
+      '/cms/redirects/check',
+      { params: { path } },
+    );
+    return data.data;
+  } catch {
+    return null;
+  }
 }

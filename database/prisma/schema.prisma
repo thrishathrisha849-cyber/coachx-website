@@ -633,8 +633,11 @@ model Page {
   expireAt  DateTime? @map("expire_at") @db.Timestamptz(6)
 
   /// FR-105: admin preview links expire — a short-lived token that lets
-  /// a non-published page render via `?preview=<token>`.
-  previewToken     String?   @unique @map("preview_token") @db.VarChar(64)
+  /// a non-published page render via `?preview=<token>`. Only the SHA-256
+  /// hash is persisted (same hashed-token pattern as PasswordResetToken /
+  /// EmailVerificationToken / NewsletterSubscriber.unsubscribeTokenHash) —
+  /// the raw token exists only in the generation response and the URL.
+  previewTokenHash String?   @unique @map("preview_token_hash") @db.VarChar(64)
   previewExpiresAt DateTime? @map("preview_expires_at") @db.Timestamptz(6)
 
   createdBy String? @map("created_by") @db.Uuid

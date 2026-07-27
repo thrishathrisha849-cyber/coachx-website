@@ -105,7 +105,7 @@ export async function searchSite(
 }
 
 /** Exact match = 3, starts-with = 2, contains = 1, no match = 0 (best across all fields). */
-function scoreMatch(query: string, fields: string[]): number {
+export function scoreMatch(query: string, fields: string[]): number {
   const lowerQuery = query.toLowerCase();
   let best = 0;
 
@@ -126,7 +126,7 @@ function scoreMatch(query: string, fields: string[]): number {
  * 5 Part 2 security review: no new `dangerouslySetInnerHTML` surface
  * introduced for search results).
  */
-function highlight(text: string, query: string): HighlightSegment[] {
+export function highlight(text: string, query: string): HighlightSegment[] {
   if (!query || !text) return [{ text, highlight: false }];
 
   const lowerText = text.toLowerCase();

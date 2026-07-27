@@ -18,6 +18,7 @@ import {
   newsletterUnsubscribeSchema,
   searchSchema,
   blogListSchema,
+  checkRedirectSchema,
 } from '../../cms/cms.validation';
 import {
   getPageBySlug,
@@ -35,6 +36,7 @@ import {
   getPageVersions,
 } from '../../cms/admin-cms.controller';
 import { postContact, postNewsletterSubscribe, postNewsletterUnsubscribe } from '../../cms/contact.controller';
+import { checkRedirect } from '../../cms/seo.controller';
 
 /**
  * Phase 5 — Public Website & CMS routes. Public reads use
@@ -55,6 +57,7 @@ router.get('/navigation/:location', cacheControl, authenticateOptional, getNavig
 router.get('/announcements', cacheControl, listAnnouncements);
 router.get('/faqs', cacheControl, listFaqs);
 router.get('/search', searchRateLimiter, validate(searchSchema), search);
+router.get('/redirects/check', cacheControl, validate(checkRedirectSchema), checkRedirect);
 
 // --- Admin writes (backend foundation only, no editor UI) --------------
 router.post('/admin/pages', authenticate, requirePermission('content.manage'), validate(createPageSchema), postPage);

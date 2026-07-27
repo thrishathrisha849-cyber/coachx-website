@@ -1,14 +1,18 @@
 import { useState, type FormEvent } from 'react';
 import { subscribeToNewsletter } from '@/api/cms.api';
 import type { NormalizedApiError } from '@/api/client';
+import { HoneypotField } from './HoneypotField';
 
 /**
  * 002 FR-081/FR-082: labels, inline validation, submit-loading state,
  * duplicate-submission prevention (disabled while submitting).
+ * Duplicate-safe/email-normalized/consent-timestamped server-side (see
+ * `newsletter.service.ts`).
  */
 export function NewsletterForm() {
   const [email, setEmail] = useState('');
   const [consent, setConsent] = useState(false);
+  const [honeypot, setHoneypot] = useState('');
   const [status, setStatus] = useState<'idle' | 'submitting' | 'success' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
 
@@ -25,7 +29,7 @@ export function NewsletterForm() {
     setError(null);
 
     try {
-      await subscribeToNewsletter(email);
+      await subscribeToNewsletter(email, honeypot);
       setStatus('success');
       setEmail('');
     } catch (err) {
@@ -40,6 +44,7 @@ export function NewsletterForm() {
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-2" noValidate>
+      <HoneypotField value={honeypot} onChange={setHoneypot} />
       <label htmlFor="newsletter-email" className="text-xs font-medium text-slate-600 dark:text-slate-400">
         Get updates in your inbox
       </label>
