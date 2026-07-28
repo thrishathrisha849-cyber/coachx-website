@@ -58,17 +58,15 @@ async function assertParentValid(parentId: string | undefined, selfId: string | 
     throw AppError.badRequest('Invalid parent category');
   }
 
-  // Depth cap: the chosen parent must itself be a ROOT category (depth 0)
-  // — i.e. it must not already have a parent — otherwise this category
-  // would land at depth 2+, beyond FR-014's category/subcategory model.
-  if (parent.parentId) {
-    throw AppError.badRequest(
-      `Category hierarchy is limited to ${MAX_CATEGORY_DEPTH} levels (category/subcategory) — the chosen parent is already a subcategory`,
-    );
-  }
-
   if (selfId) {
-    // Prevent ancestor cycles: the new parent must not be a descendant of self.
+    // Ancestor-cycle check FIRST, deliberately, before the depth-cap
+    // check below: a proposed parent that is a descendant of self is a
+    // structural conflict (409) — a more specific problem than the
+    // generic depth-cap message, and one that would otherwise always be
+    // shadowed by it. A direct cycle (self's own child chosen as its new
+    // parent) fails the depth-cap check too, since a non-root descendant
+    // always has a parent — so without this ordering a genuine cycle
+    // would incorrectly surface as 400 instead of 409.
     const descendants = await findDescendantCategoryIds(selfId, tx);
     if (descendants.has(parentId)) {
       throw AppError.conflict('Cannot set parent: this would create a category hierarchy cycle');
@@ -82,6 +80,15 @@ async function assertParentValid(parentId: string | undefined, selfId: string | 
         `Cannot assign a parent to this category — it already has subcategories, and the hierarchy is limited to ${MAX_CATEGORY_DEPTH} levels`,
       );
     }
+  }
+
+  // Depth cap: the chosen parent must itself be a ROOT category (depth 0)
+  // — i.e. it must not already have a parent — otherwise this category
+  // would land at depth 2+, beyond FR-014's category/subcategory model.
+  if (parent.parentId) {
+    throw AppError.badRequest(
+      `Category hierarchy is limited to ${MAX_CATEGORY_DEPTH} levels (category/subcategory) — the chosen parent is already a subcategory`,
+    );
   }
 }
 

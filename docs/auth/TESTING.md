@@ -75,3 +75,24 @@ reading test output, in CI or locally.
 | Tampered token rejection | `token.unit.test.ts` "rejects a tampered token"; integration "rejects an expired/tampered token on a protected route" |
 | Privilege escalation prevention | RBAC suite "prevents self-escalation" |
 | Rate-limit behavior | Exercised by the rate-limiter middleware itself (`express-rate-limit`, already covered by that library's own test suite) — a dedicated 429-triggering integration test was not added given it would require issuing 10+ real requests per test run against a live rate-limit window, adding meaningful runtime for marginal additional confidence beyond the middleware's own well-established correctness; documented here rather than silently omitted. |
+
+### Test isolation from the production rate limiters
+
+`registerRateLimiter` (5/hour/IP) and `loginRateLimiter` (10/15min/IP —
+both in `auth-rate-limit.middleware.ts`) are intentionally small, fixed,
+non-configurable numbers (see that file's own header comment) — this is
+correct production security posture and was NOT weakened to make tests
+pass. Instead, `auth.integration.test.ts` and `cms.integration.test.ts`
+give each registration/login call in a test file its own synthetic
+`X-Forwarded-For` IP via a per-file `nextTestIp()` counter (`trust proxy`
+is already enabled in `app.ts`, so this is the same signal a real proxy
+would forward for genuinely distinct clients). This is a test-fixture
+concern only: a single test file legitimately creates far more than
+5–10 accounts/logins across its full run than any one real client would
+in the same window, so without per-fixture IP variation the shared
+default test-client IP exhausts the limiter's budget partway through the
+file and every later fixture 429s — not a rate-limiter defect. Where a
+test's own intent is multiple attempts from the SAME conceptual client
+(e.g. the account-lockout test's repeated wrong-password attempts, or
+the rapid-double-submit idempotency test's two parallel requests), those
+calls deliberately share one IP rather than each getting a fresh one.

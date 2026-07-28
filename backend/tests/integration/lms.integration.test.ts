@@ -258,6 +258,86 @@ describe('Course categories (hierarchy, cycle prevention, depth cap)', () => {
     expect(cycleAttempt.status).toBe(409);
   });
 
+  it('rejects a category being set as its own parent via update (self-parent)', async () => {
+    if (skip()) return;
+    await ensureFixtures();
+
+    const catRes = await request(app)
+      .post('/api/v1/lms/admin/categories')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ name: 'Self Parent', slug: uniqueSlug('self-parent') });
+    const catId = catRes.body.data.id;
+
+    const selfParentAttempt = await request(app)
+      .patch(`/api/v1/lms/admin/categories/${catId}`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ parentId: catId });
+    expect(selfParentAttempt.status).toBe(400);
+  });
+
+  it('detects an ancestor cycle against any of several children, not just a hardcoded first match', async () => {
+    if (skip()) return;
+    await ensureFixtures();
+
+    const parentRes = await request(app)
+      .post('/api/v1/lms/admin/categories')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ name: 'Multi Parent', slug: uniqueSlug('multi-parent') });
+    const parentId = parentRes.body.data.id;
+
+    const child1Res = await request(app)
+      .post('/api/v1/lms/admin/categories')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ name: 'Multi Child 1', slug: uniqueSlug('multi-child-1'), parentId });
+    expect(child1Res.status).toBe(201);
+
+    const child2Res = await request(app)
+      .post('/api/v1/lms/admin/categories')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ name: 'Multi Child 2', slug: uniqueSlug('multi-child-2'), parentId });
+    const child2Id = child2Res.body.data.id;
+    expect(child2Res.status).toBe(201);
+
+    // Cycle via the SECOND child, not the first — the descendant-set
+    // check must catch this regardless of which child is chosen.
+    const cycleAttempt = await request(app)
+      .patch(`/api/v1/lms/admin/categories/${parentId}`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ parentId: child2Id });
+    expect(cycleAttempt.status).toBe(409);
+  });
+
+  it('rejects assigning an existing subcategory as a parent via update (depth cap, not a cycle)', async () => {
+    if (skip()) return;
+    await ensureFixtures();
+
+    const rootRes = await request(app)
+      .post('/api/v1/lms/admin/categories')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ name: 'Depth Update Root', slug: uniqueSlug('depth-update-root') });
+    const rootId = rootRes.body.data.id;
+
+    const subRes = await request(app)
+      .post('/api/v1/lms/admin/categories')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ name: 'Depth Update Sub', slug: uniqueSlug('depth-update-sub'), parentId: rootId });
+    const subId = subRes.body.data.id;
+
+    const otherRootRes = await request(app)
+      .post('/api/v1/lms/admin/categories')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ name: 'Depth Update Other Root', slug: uniqueSlug('depth-update-other-root') });
+    const otherRootId = otherRootRes.body.data.id;
+
+    // Unrelated to `subId`'s ancestry (no cycle) — must be rejected purely
+    // for exceeding the 2-level depth cap, i.e. a 400, not a 409.
+    const depthAttempt = await request(app)
+      .patch(`/api/v1/lms/admin/categories/${otherRootId}`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ parentId: subId });
+    expect(depthAttempt.status).toBe(400);
+  });
+
   it('rejects creating a 3rd hierarchy level (subcategory of a subcategory) — 004 FR-014 is a 2-level category/subcategory model', async () => {
     if (skip()) return;
     await ensureFixtures();

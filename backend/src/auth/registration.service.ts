@@ -50,6 +50,23 @@ export async function register(input: RegisterInput): Promise<RegisterResult> {
 
   const normalizedEmail = input.email.trim().toLowerCase();
 
+  // FR-021: duplicate detection — checked BEFORE the idempotency layer,
+  // deliberately. The no-client-key fallback below is keyed only on
+  // email, and its cached record never expires, so without this ordering
+  // a second, genuinely-distinct registration attempt for an
+  // already-registered email (no explicit Idempotency-Key header — the
+  // common case for a real client) would be misread as a "replay" of the
+  // first request and incorrectly return the original success payload
+  // instead of the 409 this email conflict must produce. Checked here
+  // with a generic downstream error; the transaction's own unique
+  // constraint on User.email remains the real, race-safe guarantee for
+  // the concurrent case (defense in depth, not solely reliant on this
+  // check winning the race).
+  const existing = await findUserByEmail(normalizedEmail);
+  if (existing) {
+    throw AppError.conflict('If this email is available, an account can be created with it. If an account already exists, please log in or reset your password instead.');
+  }
+
   // FR-022: idempotent submission handling — a rapid double-click resubmit
   // with the same idempotency key returns the original result rather than
   // creating a second account. Falls back to a per-email key when the
@@ -72,26 +89,6 @@ export async function register(input: RegisterInput): Promise<RegisterResult> {
   }
 
   try {
-    // FR-021: duplicate detection — checked OUTSIDE the transaction with a
-    // generic downstream error, but the transaction's own unique
-    // constraint on User.email is the real, race-safe guarantee; this
-    // check exists to produce a clean 409 rather than relying solely on a
-    // raw constraint-violation surfacing through error normalization.
-    const existing = await findUserByEmail(normalizedEmail);
-    if (existing) {
-      // FR-021: generic, non-account-existence-confirming message is a
-      // FRONTEND presentation concern (Login/Forgot-Password/Continue-
-      // with-provider options) — the API itself must still signal
-      // "conflict" distinctly from "success" (a silent-success response
-      // for a duplicate email would itself be a worse security bug: it
-      // would let an attacker silently overwrite nothing but ALSO give no
-      // signal at all, breaking the resend-verification/forgot-password
-      // recovery path for the legitimate owner). The 409 code is
-      // intentionally generic ("an account may already use this email")
-      // rather than a raw "email taken" message.
-      throw AppError.conflict('If this email is available, an account can be created with it. If an account already exists, please log in or reset your password instead.');
-    }
-
     const passwordHash = await hashPassword(input.password);
 
     const rawVerificationToken = generateSecureToken();

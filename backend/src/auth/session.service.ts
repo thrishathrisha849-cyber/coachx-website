@@ -104,29 +104,37 @@ export async function issueSession(userId: string, context: SessionContext): Pro
  */
 export async function rotateSession(rawRefreshToken: string): Promise<IssuedTokenPair> {
   const presentedHash = hashToken(rawRefreshToken);
+  const session = await findSessionByRefreshTokenHash(presentedHash);
 
-  return withTransaction(async (tx) => {
-    const session = await findSessionByRefreshTokenHash(presentedHash, tx);
+  if (!session) {
+    // The presented token doesn't match any session's CURRENT hash.
+    // This is exactly the reuse-of-an-already-rotated-token signature
+    // if the token was ever valid at all — since we cannot know which
+    // family it belonged to without a matching row, we cannot revoke a
+    // specific family, so we simply reject. (A genuinely fabricated
+    // token also lands here — indistinguishable from replay by design,
+    // which is the correct security posture: never confirm which case
+    // occurred to the caller.)
+    throw AppError.unauthorized('Invalid or expired refresh token');
+  }
 
-    if (!session) {
-      // The presented token doesn't match any session's CURRENT hash.
-      // This is exactly the reuse-of-an-already-rotated-token signature
-      // if the token was ever valid at all — since we cannot know which
-      // family it belonged to without a matching row, we cannot revoke a
-      // specific family, so we simply reject. (A genuinely fabricated
-      // token also lands here — indistinguishable from replay by design,
-      // which is the correct security posture: never confirm which case
-      // occurred to the caller.)
-      throw AppError.unauthorized('Invalid or expired refresh token');
-    }
-
-    if (session.revoked) {
-      // The token matched a row, but that row is already revoked — this
-      // IS unambiguous reuse of a token from a family that has already
-      // rotated past this point (rotation revokes the old hash's
-      // discoverability by overwriting it, so reaching a revoked row by
-      // hash match only happens via the reuse-detection revoke path
-      // itself, or a directly-revoked session). Revoke the whole family.
+  if (session.revoked) {
+    // The token matched a row, but that row is already revoked — this IS
+    // unambiguous reuse of a token from a family that has already
+    // rotated past this point (rotation revokes the OLD row rather than
+    // overwriting its hash in place, so reaching a revoked row by hash
+    // match only happens via this path or a directly-revoked session).
+    // Revoke the whole family.
+    //
+    // Committed in its OWN transaction, deliberately: this call and the
+    // AppError thrown right after it must NOT share a transaction with
+    // each other. Prisma's $transaction rolls back every write in the
+    // callback when the callback throws — sharing one here would silently
+    // undo the family revocation the instant the 401 below is raised,
+    // leaving every other session in the family (e.g. an already-rotated,
+    // still-valid refresh token) usable, exactly what this check exists
+    // to prevent (FR-056).
+    await withTransaction(async (tx) => {
       await revokeSessionFamily(session.tokenFamily, 'refresh_token_reuse_detected', tx);
       await recordAuditEvent(
         {
@@ -139,30 +147,32 @@ export async function rotateSession(rawRefreshToken: string): Promise<IssuedToke
         },
         tx,
       );
-      throw new AppError(
-        'This session has been revoked due to suspicious activity. Please log in again.',
-        401,
-        AUTH_ERROR_CODES.REFRESH_TOKEN_REUSE_DETECTED,
-      );
-    }
+    });
+    throw new AppError(
+      'This session has been revoked due to suspicious activity. Please log in again.',
+      401,
+      AUTH_ERROR_CODES.REFRESH_TOKEN_REUSE_DETECTED,
+    );
+  }
 
-    if (session.expiresAt < new Date()) {
-      throw new AppError('Refresh token has expired', 401, AUTH_ERROR_CODES.TOKEN_EXPIRED);
-    }
+  if (session.expiresAt < new Date()) {
+    throw new AppError('Refresh token has expired', 401, AUTH_ERROR_CODES.TOKEN_EXPIRED);
+  }
 
+  return withTransaction(async (tx) => {
     const roles = await getUserRoleNames(session.userId, tx);
     const newRefreshToken = generateSecureToken();
     const newHash = hashToken(newRefreshToken);
 
-    await rotateSessionRefreshToken(session.id, newHash, tx);
+    const rotated = await rotateSessionRefreshToken(session, newHash, tx);
 
-    const accessToken = signAccessToken({ sub: session.userId, sid: session.id, roles });
+    const accessToken = signAccessToken({ sub: session.userId, sid: rotated.id, roles });
 
     return {
       accessToken,
       refreshToken: newRefreshToken,
-      sessionId: session.id,
-      expiresAt: session.expiresAt,
+      sessionId: rotated.id,
+      expiresAt: rotated.expiresAt,
     };
   });
 }

@@ -70,6 +70,23 @@ function uniqueEmail(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}@example.com`;
 }
 
+let registrationIpCounter = 0;
+
+/**
+ * This file registers far more than 5 accounts in one run (one per test,
+ * some tests create two), so without per-call IP variation every request
+ * past the 5th would collide with the real, deliberately-strict
+ * `registerRateLimiter` (5/hour/IP — see auth-rate-limit.middleware.ts)
+ * and 429 — a test-fixture isolation problem, not a reason to loosen that
+ * production control. `trust proxy` is enabled in app.ts, so a distinct
+ * synthetic `X-Forwarded-For` per registration gives each fixture its own
+ * rate-limit bucket, exactly as distinct real clients would have.
+ */
+function nextTestIp(): string {
+  registrationIpCounter += 1;
+  return `10.${(registrationIpCounter >> 16) & 0xff}.${(registrationIpCounter >> 8) & 0xff}.${registrationIpCounter & 0xff}`;
+}
+
 beforeAll(async () => {
   if (!process.env.DATABASE_URL) {
     // eslint-disable-next-line no-console
@@ -117,6 +134,7 @@ function skip(): boolean {
 async function registerAndVerify(email: string, password = 'GoodPassword1') {
   await request(app)
     .post('/api/v1/auth/register')
+    .set('X-Forwarded-For', nextTestIp())
     .send({ name: 'Test User', email, password, confirmPassword: password, acceptedTerms: true });
 
   const sentMessage = emailAdapter.sent.find((m: any) => m.to === email && m.subject.includes('Verify'));
@@ -137,6 +155,7 @@ describe('Registration (003 User Story 1)', () => {
     const email = uniqueEmail('register');
     const response = await request(app)
       .post('/api/v1/auth/register')
+      .set('X-Forwarded-For', nextTestIp())
       .send({ name: 'Jane Doe', email, password: 'GoodPassword1', confirmPassword: 'GoodPassword1', acceptedTerms: true });
 
     expect(response.status).toBe(201);
@@ -155,11 +174,13 @@ describe('Registration (003 User Story 1)', () => {
     const email = uniqueEmail('dup');
     await request(app)
       .post('/api/v1/auth/register')
-      .send({ name: 'A', email, password: 'GoodPassword1', confirmPassword: 'GoodPassword1', acceptedTerms: true });
+      .set('X-Forwarded-For', nextTestIp())
+      .send({ name: 'User A', email, password: 'GoodPassword1', confirmPassword: 'GoodPassword1', acceptedTerms: true });
 
     const second = await request(app)
       .post('/api/v1/auth/register')
-      .send({ name: 'B', email, password: 'GoodPassword1', confirmPassword: 'GoodPassword1', acceptedTerms: true });
+      .set('X-Forwarded-For', nextTestIp())
+      .send({ name: 'User B', email, password: 'GoodPassword1', confirmPassword: 'GoodPassword1', acceptedTerms: true });
 
     expect(second.status).toBe(409);
 
@@ -174,7 +195,8 @@ describe('Registration (003 User Story 1)', () => {
     const email = uniqueEmail('weakpw');
     const response = await request(app)
       .post('/api/v1/auth/register')
-      .send({ name: 'A', email, password: 'weak', confirmPassword: 'weak', acceptedTerms: true });
+      .set('X-Forwarded-For', nextTestIp())
+      .send({ name: 'Weak Pw', email, password: 'weak', confirmPassword: 'weak', acceptedTerms: true });
 
     expect(response.status).toBe(400);
   });
@@ -183,11 +205,12 @@ describe('Registration (003 User Story 1)', () => {
     if (skip()) return;
 
     const email = uniqueEmail('idem');
-    const payload = { name: 'A', email, password: 'GoodPassword1', confirmPassword: 'GoodPassword1', acceptedTerms: true };
+    const payload = { name: 'Idem User', email, password: 'GoodPassword1', confirmPassword: 'GoodPassword1', acceptedTerms: true };
 
+    const sharedClientIp = nextTestIp();
     const [r1, r2] = await Promise.all([
-      request(app).post('/api/v1/auth/register').set('Idempotency-Key', 'same-key-123').send(payload),
-      request(app).post('/api/v1/auth/register').set('Idempotency-Key', 'same-key-123').send(payload),
+      request(app).post('/api/v1/auth/register').set('Idempotency-Key', 'same-key-123').set('X-Forwarded-For', sharedClientIp).send(payload),
+      request(app).post('/api/v1/auth/register').set('Idempotency-Key', 'same-key-123').set('X-Forwarded-For', sharedClientIp).send(payload),
     ]);
 
     // One should succeed (or replay), the other may see "in-progress" —
@@ -237,7 +260,7 @@ describe('Login (003 User Story 3)', () => {
     const email = uniqueEmail('login-ok');
     await registerAndVerify(email);
 
-    const response = await request(app).post('/api/v1/auth/login').send({ email, password: 'GoodPassword1' });
+    const response = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email, password: 'GoodPassword1' });
 
     expect(response.status).toBe(200);
     expect(response.body.data.accessToken).toBeDefined();
@@ -250,9 +273,9 @@ describe('Login (003 User Story 3)', () => {
     const email = uniqueEmail('login-fail');
     await registerAndVerify(email);
 
-    const wrongPassword = await request(app).post('/api/v1/auth/login').send({ email, password: 'WrongPassword1' });
+    const wrongPassword = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email, password: 'WrongPassword1' });
     const nonexistent = await request(app)
-      .post('/api/v1/auth/login')
+      .post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp())
       .send({ email: uniqueEmail('does-not-exist'), password: 'WrongPassword1' });
 
     expect(wrongPassword.status).toBe(401);
@@ -267,9 +290,10 @@ describe('Login (003 User Story 3)', () => {
     const email = uniqueEmail('unverified');
     await request(app)
       .post('/api/v1/auth/register')
-      .send({ name: 'A', email, password: 'GoodPassword1', confirmPassword: 'GoodPassword1', acceptedTerms: true });
+      .set('X-Forwarded-For', nextTestIp())
+      .send({ name: 'Unverified', email, password: 'GoodPassword1', confirmPassword: 'GoodPassword1', acceptedTerms: true });
 
-    const response = await request(app).post('/api/v1/auth/login').send({ email, password: 'GoodPassword1' });
+    const response = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email, password: 'GoodPassword1' });
     expect(response.status).toBe(403);
     expect(response.body.error.code).toBe('AUTH_EMAIL_UNVERIFIED');
   });
@@ -282,10 +306,10 @@ describe('Login (003 User Story 3)', () => {
 
     // Default threshold is 5 (AUTH_LOGIN_LOCKOUT_THRESHOLD).
     for (let i = 0; i < 5; i++) {
-      await request(app).post('/api/v1/auth/login').send({ email, password: 'WrongPassword1' });
+      await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email, password: 'WrongPassword1' });
     }
 
-    const response = await request(app).post('/api/v1/auth/login').send({ email, password: 'GoodPassword1' });
+    const response = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email, password: 'GoodPassword1' });
     expect(response.status).toBe(423);
     expect(response.body.error.code).toBe('AUTH_ACCOUNT_LOCKED');
   }, 15_000);
@@ -297,7 +321,7 @@ describe('Refresh-token rotation and reuse detection (Phase 4 brief §6)', () =>
 
     const email = uniqueEmail('rotate');
     await registerAndVerify(email);
-    const loginRes = await request(app).post('/api/v1/auth/login').send({ email, password: 'GoodPassword1' });
+    const loginRes = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email, password: 'GoodPassword1' });
     const originalRefreshToken = loginRes.body.data.refreshToken;
 
     const refreshRes = await request(app).post('/api/v1/auth/refresh').send({ refreshToken: originalRefreshToken });
@@ -316,7 +340,7 @@ describe('Refresh-token rotation and reuse detection (Phase 4 brief §6)', () =>
 
     const email = uniqueEmail('reuse-detect');
     await registerAndVerify(email);
-    const loginRes = await request(app).post('/api/v1/auth/login').send({ email, password: 'GoodPassword1' });
+    const loginRes = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email, password: 'GoodPassword1' });
     const originalRefreshToken = loginRes.body.data.refreshToken;
 
     // Rotate once (this is legitimate).
@@ -346,7 +370,7 @@ describe('Logout (003 FR-059)', () => {
 
     const email = uniqueEmail('logout');
     await registerAndVerify(email);
-    const loginRes = await request(app).post('/api/v1/auth/login').send({ email, password: 'GoodPassword1' });
+    const loginRes = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email, password: 'GoodPassword1' });
     const { accessToken, refreshToken } = loginRes.body.data;
 
     const logoutRes = await request(app)
@@ -365,8 +389,8 @@ describe('Logout (003 FR-059)', () => {
     const email = uniqueEmail('logout-all');
     await registerAndVerify(email);
 
-    const session1 = await request(app).post('/api/v1/auth/login').send({ email, password: 'GoodPassword1' });
-    const session2 = await request(app).post('/api/v1/auth/login').send({ email, password: 'GoodPassword1' });
+    const session1 = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email, password: 'GoodPassword1' });
+    const session2 = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email, password: 'GoodPassword1' });
 
     await request(app)
       .post('/api/v1/auth/logout-all')
@@ -406,12 +430,12 @@ describe('Password reset (003 User Story 5, SC-003)', () => {
 
     const email = uniqueEmail('reset-flow');
     await registerAndVerify(email);
-    const loginRes = await request(app).post('/api/v1/auth/login').send({ email, password: 'GoodPassword1' });
+    const loginRes = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email, password: 'GoodPassword1' });
     const oldRefreshToken = loginRes.body.data.refreshToken;
 
     await request(app).post('/api/v1/auth/forgot-password').send({ email });
     const resetMessage = emailAdapter.sent.find((m: any) => m.to === email && m.subject.includes('Reset'));
-    const rawToken = resetMessage?.text.match(/token: (\S+)/)?.[1];
+    const rawToken = resetMessage?.text.match(/password: (\S+)/)?.[1];
     expect(rawToken).toBeDefined();
 
     const resetRes = await request(app)
@@ -424,10 +448,10 @@ describe('Password reset (003 User Story 5, SC-003)', () => {
     expect(refreshAfterReset.status).toBe(401);
 
     // New password works; old password does not.
-    const loginNew = await request(app).post('/api/v1/auth/login').send({ email, password: 'NewGoodPassword1' });
+    const loginNew = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email, password: 'NewGoodPassword1' });
     expect(loginNew.status).toBe(200);
 
-    const loginOld = await request(app).post('/api/v1/auth/login').send({ email, password: 'GoodPassword1' });
+    const loginOld = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email, password: 'GoodPassword1' });
     expect(loginOld.status).toBe(401);
   });
 
@@ -438,7 +462,7 @@ describe('Password reset (003 User Story 5, SC-003)', () => {
     await registerAndVerify(email);
     await request(app).post('/api/v1/auth/forgot-password').send({ email });
     const resetMessage = emailAdapter.sent.find((m: any) => m.to === email && m.subject.includes('Reset'));
-    const rawToken = resetMessage?.text.match(/token: (\S+)/)?.[1];
+    const rawToken = resetMessage?.text.match(/password: (\S+)/)?.[1];
 
     await request(app)
       .post('/api/v1/auth/reset-password')
@@ -458,7 +482,7 @@ describe('Sessions (003 FR-060–FR-061)', () => {
 
     const email = uniqueEmail('sessions');
     await registerAndVerify(email);
-    const loginRes = await request(app).post('/api/v1/auth/login').send({ email, password: 'GoodPassword1' });
+    const loginRes = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email, password: 'GoodPassword1' });
     const { accessToken } = loginRes.body.data;
 
     const listRes = await request(app).get('/api/v1/auth/sessions').set('Authorization', `Bearer ${accessToken}`);
@@ -481,8 +505,8 @@ describe('Sessions (003 FR-060–FR-061)', () => {
     await registerAndVerify(emailA);
     await registerAndVerify(emailB);
 
-    const loginA = await request(app).post('/api/v1/auth/login').send({ email: emailA, password: 'GoodPassword1' });
-    const loginB = await request(app).post('/api/v1/auth/login').send({ email: emailB, password: 'GoodPassword1' });
+    const loginA = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email: emailA, password: 'GoodPassword1' });
+    const loginB = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email: emailB, password: 'GoodPassword1' });
 
     const sessionsB = await request(app)
       .get('/api/v1/auth/sessions')
@@ -504,7 +528,7 @@ describe('MFA lifecycle (003 FR-050–FR-054)', () => {
 
     const email = uniqueEmail('mfa');
     await registerAndVerify(email);
-    const loginRes = await request(app).post('/api/v1/auth/login').send({ email, password: 'GoodPassword1' });
+    const loginRes = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email, password: 'GoodPassword1' });
     const { accessToken } = loginRes.body.data;
 
     const enrollRes = await request(app)
@@ -527,7 +551,7 @@ describe('MFA lifecycle (003 FR-050–FR-054)', () => {
     expect(confirmRes.body.data.recoveryCodes).toHaveLength(10);
 
     // Next login must now require an MFA challenge.
-    const secondLogin = await request(app).post('/api/v1/auth/login').send({ email, password: 'GoodPassword1' });
+    const secondLogin = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email, password: 'GoodPassword1' });
     expect(secondLogin.status).toBe(200);
     expect(secondLogin.body.data.mfaRequired).toBe(true);
 
@@ -544,7 +568,7 @@ describe('MFA lifecycle (003 FR-050–FR-054)', () => {
 
     const email = uniqueEmail('mfa-invalid');
     await registerAndVerify(email);
-    const loginRes = await request(app).post('/api/v1/auth/login').send({ email, password: 'GoodPassword1' });
+    const loginRes = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email, password: 'GoodPassword1' });
     const enrollRes = await request(app)
       .post('/api/v1/auth/mfa/enroll')
       .set('Authorization', `Bearer ${loginRes.body.data.accessToken}`)
@@ -558,7 +582,7 @@ describe('MFA lifecycle (003 FR-050–FR-054)', () => {
       .set('Authorization', `Bearer ${loginRes.body.data.accessToken}`)
       .send({ code: totp.generate() });
 
-    const secondLogin = await request(app).post('/api/v1/auth/login').send({ email, password: 'GoodPassword1' });
+    const secondLogin = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email, password: 'GoodPassword1' });
 
     const badChallenge = await request(app)
       .post('/api/v1/auth/mfa/challenge')
@@ -576,7 +600,7 @@ describe('RBAC enforcement (001 FR-084–FR-089; Phase 4 brief §10)', () => {
     await registerAndVerify(emailA);
     await registerAndVerify(emailB);
 
-    const loginA = await request(app).post('/api/v1/auth/login').send({ email: emailA, password: 'GoodPassword1' });
+    const loginA = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email: emailA, password: 'GoodPassword1' });
     const db = getPrismaClient();
     const userB = await db.user.findUnique({ where: { email: emailB.toLowerCase() } });
 
@@ -599,7 +623,7 @@ describe('RBAC enforcement (001 FR-084–FR-089; Phase 4 brief §10)', () => {
     const adminRole = await db.role.findUnique({ where: { name: 'platform_admin' } });
     await db.userRole.create({ data: { userId: user.id, roleId: adminRole.id } });
 
-    const login = await request(app).post('/api/v1/auth/login').send({ email, password: 'GoodPassword1' });
+    const login = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email, password: 'GoodPassword1' });
 
     const response = await request(app)
       .patch(`/api/v1/admin/users/${user.id}/role`)
@@ -623,7 +647,7 @@ describe('RBAC enforcement (001 FR-084–FR-089; Phase 4 brief §10)', () => {
     const platformAdminRole = await db.role.findUnique({ where: { name: 'platform_admin' } });
     await db.userRole.create({ data: { userId: adminUser.id, roleId: platformAdminRole.id } });
 
-    const adminLogin = await request(app).post('/api/v1/auth/login').send({ email: adminEmail, password: 'GoodPassword1' });
+    const adminLogin = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email: adminEmail, password: 'GoodPassword1' });
 
     const response = await request(app)
       .patch(`/api/v1/admin/users/${targetUser.id}/role`)
@@ -648,7 +672,7 @@ describe('RBAC enforcement (001 FR-084–FR-089; Phase 4 brief §10)', () => {
     const adminUser = await db.user.findUnique({ where: { email: adminEmail.toLowerCase() } });
     const platformAdminRole = await db.role.findUnique({ where: { name: 'platform_admin' } });
     await db.userRole.create({ data: { userId: adminUser.id, roleId: platformAdminRole.id } });
-    const adminLogin = await request(app).post('/api/v1/auth/login').send({ email: adminEmail, password: 'GoodPassword1' });
+    const adminLogin = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email: adminEmail, password: 'GoodPassword1' });
 
     const targetEmail = uniqueEmail('rbac-noreason-target');
     await registerAndVerify(targetEmail);
@@ -669,7 +693,7 @@ describe('Security — no secret leakage', () => {
 
     const email = uniqueEmail('me-safe');
     await registerAndVerify(email);
-    const login = await request(app).post('/api/v1/auth/login').send({ email, password: 'GoodPassword1' });
+    const login = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email, password: 'GoodPassword1' });
 
     const meRes = await request(app).get('/api/v1/me').set('Authorization', `Bearer ${login.body.data.accessToken}`);
 

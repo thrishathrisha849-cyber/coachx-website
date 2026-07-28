@@ -59,6 +59,7 @@ async function seedRolesAndPermissions() {
 async function createContentManagerAndLogin(email: string) {
   await request(app)
     .post('/api/v1/auth/register')
+    .set('X-Forwarded-For', nextTestIp())
     .send({ name: 'CMS Admin', email, password: 'GoodPassword1', confirmPassword: 'GoodPassword1', acceptedTerms: true });
 
   const sentMessage = emailAdapter.sent.find((m: any) => m.to === email && m.subject.includes('Verify'));
@@ -70,7 +71,7 @@ async function createContentManagerAndLogin(email: string) {
   const role = await db.role.findUnique({ where: { name: 'content_manager' } });
   await db.userRole.create({ data: { userId: user.id, roleId: role.id } });
 
-  const loginRes = await request(app).post('/api/v1/auth/login').send({ email, password: 'GoodPassword1' });
+  const loginRes = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email, password: 'GoodPassword1' });
   return { userId: user.id, accessToken: loginRes.body.data.accessToken };
 }
 
@@ -80,6 +81,21 @@ function uniqueEmail(prefix: string): string {
 
 function uniqueSlug(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+let registrationIpCounter = 0;
+
+/**
+ * Distinct synthetic X-Forwarded-For per registration (trust proxy is
+ * enabled in app.ts) so this file's many fixture registrations don't
+ * collide with the real, deliberately-strict registerRateLimiter
+ * (5/hour/IP — auth-rate-limit.middleware.ts). Same pattern also used
+ * for the newsletter subscribe/unsubscribe calls below, which share a
+ * separate 5/15min limiter (cms-rate-limit.middleware.ts).
+ */
+function nextTestIp(): string {
+  registrationIpCounter += 1;
+  return `10.${(registrationIpCounter >> 16) & 0xff}.${(registrationIpCounter >> 8) & 0xff}.${registrationIpCounter & 0xff}`;
 }
 
 beforeAll(async () => {
@@ -198,11 +214,12 @@ describe('Page publish workflow (002 FR-086, FR-087)', () => {
     const email = uniqueEmail('no-perm');
     await request(app)
       .post('/api/v1/auth/register')
-      .send({ name: 'A', email, password: 'GoodPassword1', confirmPassword: 'GoodPassword1', acceptedTerms: true });
+      .set('X-Forwarded-For', nextTestIp())
+      .send({ name: 'No Perm', email, password: 'GoodPassword1', confirmPassword: 'GoodPassword1', acceptedTerms: true });
     const sentMessage = emailAdapter.sent.find((m: any) => m.to === email);
     const rawToken = sentMessage?.text.match(/token: (\S+)/)?.[1];
     await request(app).post('/api/v1/auth/verify-email').send({ token: rawToken });
-    const login = await request(app).post('/api/v1/auth/login').send({ email, password: 'GoodPassword1' });
+    const login = await request(app).post('/api/v1/auth/login').set('X-Forwarded-For', nextTestIp()).send({ email, password: 'GoodPassword1' });
 
     const response = await request(app)
       .post('/api/v1/cms/admin/pages')
@@ -354,7 +371,7 @@ describe('Newsletter (footer capture)', () => {
     if (skip()) return;
 
     const email = uniqueEmail('newsletter');
-    const response = await request(app).post('/api/v1/newsletter/subscribe').send({ email, consent: true });
+    const response = await request(app).post('/api/v1/newsletter/subscribe').set('X-Forwarded-For', nextTestIp()).send({ email, consent: true });
     expect(response.status).toBe(200);
 
     const db = getPrismaClient();
@@ -505,16 +522,16 @@ describe('Newsletter unsubscribe (Phase 5 Part 2 safe unsubscribe)', () => {
     if (skip()) return;
 
     const email = uniqueEmail('unsub');
-    await request(app).post('/api/v1/newsletter/subscribe').send({ email, consent: true });
+    await request(app).post('/api/v1/newsletter/subscribe').set('X-Forwarded-For', nextTestIp()).send({ email, consent: true });
 
     const sentMessage = emailAdapter.sent.find((m: any) => m.to === email.toLowerCase());
     const rawToken = sentMessage?.text.match(/token=(\S+)/)?.[1];
     expect(rawToken).toBeDefined();
 
-    const invalidRes = await request(app).post('/api/v1/newsletter/unsubscribe').query({ token: 'not-a-real-token' });
+    const invalidRes = await request(app).post('/api/v1/newsletter/unsubscribe').set('X-Forwarded-For', nextTestIp()).query({ token: 'not-a-real-token' });
     expect(invalidRes.status).toBe(404);
 
-    const unsubRes = await request(app).post('/api/v1/newsletter/unsubscribe').query({ token: rawToken });
+    const unsubRes = await request(app).post('/api/v1/newsletter/unsubscribe').set('X-Forwarded-For', nextTestIp()).query({ token: rawToken });
     expect(unsubRes.status).toBe(200);
 
     const db = getPrismaClient();
@@ -522,7 +539,7 @@ describe('Newsletter unsubscribe (Phase 5 Part 2 safe unsubscribe)', () => {
     expect(subscriber.unsubscribedAt).not.toBeNull();
 
     // Idempotent: unsubscribing again with the same token still succeeds.
-    const secondRes = await request(app).post('/api/v1/newsletter/unsubscribe').query({ token: rawToken });
+    const secondRes = await request(app).post('/api/v1/newsletter/unsubscribe').set('X-Forwarded-For', nextTestIp()).query({ token: rawToken });
     expect(secondRes.status).toBe(200);
   });
 
@@ -531,7 +548,7 @@ describe('Newsletter unsubscribe (Phase 5 Part 2 safe unsubscribe)', () => {
     // There is no email-parameter variant of this endpoint — only
     // ?token=. Confirms the safe-unsubscribe design: an attacker who
     // merely knows someone's email cannot unsubscribe them.
-    const response = await request(app).post('/api/v1/newsletter/unsubscribe').query({ token: '' });
+    const response = await request(app).post('/api/v1/newsletter/unsubscribe').set('X-Forwarded-For', nextTestIp()).query({ token: '' });
     expect(response.status).toBe(400); // fails validation (token required, min length 1)
   });
 });
@@ -565,6 +582,7 @@ describe('Spam-protection honeypot (Phase 5 Part 2)', () => {
     const email = uniqueEmail('honeypot-newsletter');
     const response = await request(app)
       .post('/api/v1/newsletter/subscribe')
+      .set('X-Forwarded-For', nextTestIp())
       .send({ email, consent: true, website: 'http://spam.example.com' });
 
     expect(response.status).toBe(200);

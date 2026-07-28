@@ -109,15 +109,51 @@ export function findSessionById(id: string, tx?: TransactionClient) {
   return db(tx).session.findUnique({ where: { id } });
 }
 
+/**
+ * Rotates a session to a new refresh token by revoking the presented
+ * (now-superseded) row and creating a new row in the same token family,
+ * rather than overwriting `refreshTokenHash` in place. An in-place
+ * overwrite would make the OLD hash permanently unmatchable by
+ * `findSessionByRefreshTokenHash` — so a replay of the old token would
+ * fall into the generic "no session found" branch in
+ * `session.service.ts`, never the `session.revoked` reuse-detection
+ * branch, meaning `revokeSessionFamily` would never actually run for a
+ * stolen/replayed refresh token (FR-056). Keeping the old row (revoked)
+ * lets a later replay of its hash be found and correctly recognized as
+ * reuse.
+ */
 export function rotateSessionRefreshToken(
-  sessionId: string,
+  oldSession: {
+    id: string;
+    userId: string;
+    tokenFamily: string;
+    expiresAt: Date;
+    deviceName: string | null;
+    userAgent: string | null;
+    ipAddress: string | null;
+  },
   newRefreshTokenHash: string,
   tx?: TransactionClient,
 ) {
-  return db(tx).session.update({
-    where: { id: sessionId },
-    data: { refreshTokenHash: newRefreshTokenHash, lastActiveAt: new Date() },
-  });
+  const client = db(tx);
+  return client.session
+    .update({
+      where: { id: oldSession.id },
+      data: { revoked: true, revokedAt: new Date(), revokedReason: 'refresh_token_rotated' },
+    })
+    .then(() =>
+      client.session.create({
+        data: {
+          userId: oldSession.userId,
+          refreshTokenHash: newRefreshTokenHash,
+          tokenFamily: oldSession.tokenFamily,
+          expiresAt: oldSession.expiresAt,
+          deviceName: oldSession.deviceName,
+          userAgent: oldSession.userAgent,
+          ipAddress: oldSession.ipAddress,
+        },
+      }),
+    );
 }
 
 export function revokeSession(sessionId: string, reason: string, tx?: TransactionClient) {
