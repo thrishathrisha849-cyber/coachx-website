@@ -57,7 +57,7 @@ export function NewsletterForm() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="you@example.com"
-          className="min-w-0 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+          className="min-w-0 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30"
         />
         <button
           type="submit"
@@ -68,7 +68,7 @@ export function NewsletterForm() {
         </button>
       </div>
       <label className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-        <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+        <input type="checkbox" className="accent-brand-600" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
         I agree to receive newsletter emails.
       </label>
       {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}

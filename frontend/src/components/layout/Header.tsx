@@ -41,8 +41,12 @@ export function Header() {
           scrolled ? 'h-12' : 'h-16'
         }`}
       >
-        <Link to="/" className={`font-semibold text-brand-600 transition-all dark:text-brand-400 ${scrolled ? 'text-base' : 'text-lg'}`}>
-          {env.appName}
+        <Link to="/" className="flex items-center transition-all" aria-label={env.appName}>
+          <img
+            src="/images/coachx-logo.jpeg"
+            alt={env.appName}
+            className={`w-auto transition-all ${scrolled ? 'h-7' : 'h-9'}`}
+          />
         </Link>
 
         {/* Desktop nav */}

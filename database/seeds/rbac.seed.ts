@@ -52,6 +52,9 @@ const BASELINE_PERMISSIONS = [
   'course.manageInstructors',
   'course.module.manage',
   'course.category.manage',
+  // Phase 7 Part 1 (Billing Foundation) — see backend/src/auth/rbac.constants.ts
+  // and docs/billing/RBAC.md.
+  'billing.catalog.manage',
 ] as const;
 
 const ROLE_PERMISSION_GRANTS: Record<(typeof ROLE_NAMES)[number], string[]> = {
@@ -73,7 +76,7 @@ const ROLE_PERMISSION_GRANTS: Record<(typeof ROLE_NAMES)[number], string[]> = {
     'course.category.manage',
     'content.manage',
   ],
-  finance_admin: ['course.view', 'payment.refund'],
+  finance_admin: ['course.view', 'payment.refund', 'billing.catalog.manage'],
   platform_admin: [
     'course.view',
     'course.create',
@@ -89,6 +92,7 @@ const ROLE_PERMISSION_GRANTS: Record<(typeof ROLE_NAMES)[number], string[]> = {
     'user.role.assign',
     'ticket.manage',
     'content.manage',
+    'billing.catalog.manage',
   ],
   super_admin: [...BASELINE_PERMISSIONS],
   organization_admin: ['course.view', 'organization.manage_own'],

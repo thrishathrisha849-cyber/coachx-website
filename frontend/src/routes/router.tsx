@@ -36,6 +36,24 @@ const CourseDetailPage = lazy(() => import('@/pages/CourseDetailPage').then((m) 
 const NewsletterUnsubscribePage = lazy(() =>
   import('@/pages/NewsletterUnsubscribePage').then((m) => ({ default: m.NewsletterUnsubscribePage })),
 );
+// Phase 7 Part 1 — billing plan-comparison route, registered BEFORE the
+// ':slug' CMS catch-all for the same reason as '/courses' above. This
+// intentionally takes priority over any CMS Page row with slug "pricing"
+// (one already exists from Phase 5 seeding) — FR-013 requires genuinely
+// dynamic, server-evaluated plan/price data, which static CMS blocks
+// cannot represent; see docs/billing/DECISION_GATES.md.
+const PricingPage = lazy(() => import('@/pages/PricingPage').then((m) => ({ default: m.PricingPage })));
+// "Join Now" fix — the header, mobile nav, and CMS-seeded homepage/pricing
+// CTAs all already link to '/join', but no route existed for it (it fell
+// through to the ':slug' CMS catch-all and 404'd, since no CMS Page row
+// has slug "join"). Registered BEFORE that catch-all for the same reason
+// as '/courses' and '/pricing' above.
+const JoinPage = lazy(() => import('@/pages/JoinPage').then((m) => ({ default: m.JoinPage })));
+// "Login" fix — the header Login link and JoinPage's "Log in" link both
+// already point to '/login', which had no route either (same missing-
+// route class of bug as '/join'). Registered BEFORE the ':slug' catch-all
+// for the same reason as the routes above.
+const LoginPage = lazy(() => import('@/pages/LoginPage').then((m) => ({ default: m.LoginPage })));
 
 function withSuspense(element: React.ReactNode) {
   return <Suspense fallback={<PageSkeleton />}>{element}</Suspense>;
@@ -53,11 +71,14 @@ export const router = createBrowserRouter([
       { path: 'courses', element: withSuspense(<CourseListPage />) },
       { path: 'courses/:slug', element: withSuspense(<CourseDetailPage />) },
       { path: 'newsletter/unsubscribe', element: withSuspense(<NewsletterUnsubscribePage />) },
+      { path: 'pricing', element: withSuspense(<PricingPage />) },
+      { path: 'join', element: withSuspense(<JoinPage />) },
+      { path: 'login', element: withSuspense(<LoginPage />) },
       { path: 'status', element: <SystemStatus /> },
       { path: 'maintenance', element: <Maintenance /> },
       { path: 'coming-soon', element: <ComingSoon /> },
-      // Every other single-segment path (about, pricing, contact, faq,
-      // privacy, terms, cookies, careers, press, roadmap, release-notes,
+      // Every other single-segment path (about, contact, faq, privacy,
+      // terms, cookies, careers, press, roadmap, release-notes,
       // membership, features, solutions, partners, help) is CMS-driven
       // by slug — no route needs to be added here per page; adding a
       // Page row with that slug is sufficient.

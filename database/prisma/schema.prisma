@@ -1870,3 +1870,401 @@ enum CompletionOverrideAction {
 
   @@map("completion_override_action")
 }
+
+// ============================================================================
+// Billing Foundation — Phase 7 Part 1 (009-membership-payments-revenue).
+//
+// Scope: ONLY the sellable-item catalog and membership-plan/entitlement
+// CONFIGURATION foundation (spec.md FR-001–FR-014) — Product, ProductPrice,
+// MembershipPlan, PlanVersion, PlanEntitlement. Checkout, orders, payment
+// processing, subscriptions (the runtime relationship a customer HOLDS to
+// a plan), webhooks, invoices, refunds, wallet, coupons, referral,
+// affiliate, and the financial ledger are explicitly Part 2+ — no
+// placeholder tables for them exist here (see docs/billing/DECISION_GATES.md).
+//
+// Architecture: same Express + Prisma + Zod + AppError + deny-by-default
+// RBAC + AuditEvent foundation as every prior phase — 009/plan.md's own
+// NestJS + unified `web/` Next.js assumption is not followed, same
+// accepted-decision-gate pattern as Phases 4–6 (see docs/auth/DECISION_GATES.md
+// gate #1 and docs/billing/ARCHITECTURE.md).
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// Product — any sellable item (FR-001, FR-002). A membership (FR-002's
+// MEMBERSHIP_* types) additionally links to exactly one MembershipPlan for
+// its plan-specific tier/entitlement/policy configuration; every other
+// product type stands alone at this phase (no course/event/mentor-session
+// FK back-reference yet — those features don't consume this catalog until
+// their own later phase wires the link).
+// ----------------------------------------------------------------------------
+model Product {
+  id String @id @default(uuid()) @db.Uuid
+
+  code String @unique @db.VarChar(60)
+  name String @db.VarChar(200)
+  slug String @unique @db.VarChar(220)
+
+  type ProductType
+
+  description      String?  @db.Text
+  shortDescription String?  @map("short_description") @db.VarChar(300)
+  mediaUrls        String[] @map("media_urls")
+
+  /// Admin-configurable free-form catalog grouping (FR-001 "category") —
+  /// deliberately a plain string, not an enum/FK: FR-002's product `type`
+  /// is already the closed taxonomy; "category" is a looser, admin-defined
+  /// display grouping on top of it (e.g. "Learning", "Community", "AI")
+  /// with no further structure specified by the spec.
+  category String? @db.VarChar(100)
+
+  /// Nullable — most products are platform-owned (no external seller); set
+  /// only for a marketplace-style seller/revenue-owner product (FR-001).
+  /// Loose reference by design (no FK), same pattern as `createdBy` below.
+  sellerId String? @map("seller_id") @db.Uuid
+
+  pricingModel     ProductPricingModel     @map("pricing_model")
+  currency         String                  @default("INR") @db.VarChar(3)
+  taxCategory      String?                 @map("tax_category") @db.VarChar(60)
+  fulfilmentMethod ProductFulfilmentMethod @default(INSTANT) @map("fulfilment_method")
+
+  availabilityStartAt DateTime? @map("availability_start_at") @db.Timestamptz(6)
+  availabilityEndAt   DateTime? @map("availability_end_at") @db.Timestamptz(6)
+  maxQuantity         Int?      @map("max_quantity")
+
+  refundPolicy String? @map("refund_policy") @db.Text
+  termsVersion String? @map("terms_version") @db.VarChar(40)
+
+  /// FR-003: only APPROVED/ACTIVE products may ever appear at public
+  /// checkout — enforced in the public-read repository query, not just
+  /// documented here (Part 1 has no checkout, but the public pricing API
+  /// applies the identical visibility rule).
+  status ProductStatus @default(DRAFT)
+
+  version Int @default(1)
+
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  prices         ProductPrice[]
+  membershipPlan MembershipPlan?
+
+  @@index([type, status])
+  @@index([status])
+  @@map("products")
+}
+
+enum ProductType {
+  MEMBERSHIP_INDIVIDUAL
+  MEMBERSHIP_TEAM
+  MEMBERSHIP_ORGANIZATION
+  COURSE
+  COURSE_BUNDLE
+  COHORT_PROGRAM
+  WORKSHOP
+  EVENT_TICKET
+  MENTOR_SESSION
+  MENTOR_PACKAGE
+  EBOOK
+  TEMPLATE
+  DIGITAL_TOOLKIT
+  PODCAST_PREMIUM
+  AI_CREDITS
+  AI_SUBSCRIPTION_ADDON
+  CERTIFICATION_FEE
+  CHALLENGE_ENTRY
+  MERCHANDISE
+  GIFT_MEMBERSHIP
+  CUSTOM
+
+  @@map("product_type")
+}
+
+enum ProductPricingModel {
+  FREE
+  ONE_TIME_FIXED
+  RECURRING_FIXED
+  USAGE_BASED
+  PER_SEAT
+  TIERED
+  PACKAGE
+  PAY_WHAT_YOU_WANT
+  CUSTOM_QUOTE
+  INSTALLMENT
+  DEPOSIT_PLUS_BALANCE
+  ADD_ON
+  CREDIT_BASED_REDEMPTION
+  POINTS_PLUS_CASH
+  PROMOTIONAL_TEMPORARY
+
+  @@map("product_pricing_model")
+}
+
+enum ProductFulfilmentMethod {
+  INSTANT
+  MANUAL
+  SCHEDULED
+
+  @@map("product_fulfilment_method")
+}
+
+enum ProductStatus {
+  DRAFT
+  REVIEW_PENDING
+  APPROVED
+  SCHEDULED
+  ACTIVE
+  PAUSED
+  SOLD_OUT
+  EXPIRED
+  ARCHIVED
+  REJECTED
+
+  @@map("product_status")
+}
+
+// ----------------------------------------------------------------------------
+// ProductPrice — a versioned price tied to a Product (FR-005, FR-007).
+// FR-006: a published (ACTIVE) price is never edited in place — the
+// service layer creates a new row sharing `priceLineageId` with an
+// incremented `version` instead of mutating an existing one.
+// ----------------------------------------------------------------------------
+model ProductPrice {
+  id String @id @default(uuid()) @db.Uuid
+
+  productId String  @map("product_id") @db.Uuid
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  /// Ties every version of "the same conceptual price" together across
+  /// FR-006's never-edit-published-price rule — see doc comment above.
+  priceLineageId String @default(uuid()) @map("price_lineage_id") @db.Uuid
+  version        Int    @default(1)
+
+  currency        String           @db.VarChar(3)
+  unitAmountMinor Int              @map("unit_amount_minor")
+  taxInclusion    TaxInclusionType @default(EXCLUSIVE) @map("tax_inclusion")
+  billingInterval BillingInterval  @map("billing_interval")
+  intervalCount   Int              @default(1) @map("interval_count")
+  trialPeriodDays Int?             @map("trial_period_days")
+  setupFeeMinor   Int?             @map("setup_fee_minor")
+  minQuantity     Int?             @map("min_quantity")
+  maxQuantity     Int?             @map("max_quantity")
+
+  effectiveStartAt DateTime? @map("effective_start_at") @db.Timestamptz(6)
+  effectiveEndAt   DateTime? @map("effective_end_at") @db.Timestamptz(6)
+
+  region      String? @db.VarChar(60)
+  userSegment String? @map("user_segment") @db.VarChar(60)
+
+  /// FR-005 "provider price reference" — the payment provider's own price
+  /// ID once Part 2's provider integration exists; always null in Part 1.
+  providerPriceReference String? @map("provider_price_reference") @db.VarChar(200)
+
+  status PriceStatus @default(DRAFT)
+
+  createdBy String?  @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([productId, status])
+  @@index([priceLineageId])
+  @@map("product_prices")
+}
+
+enum TaxInclusionType {
+  INCLUSIVE
+  EXCLUSIVE
+
+  @@map("tax_inclusion_type")
+}
+
+enum BillingInterval {
+  ONE_TIME
+  MONTHLY
+  QUARTERLY
+  HALF_YEARLY
+  ANNUAL
+  MULTI_YEAR
+  CUSTOM_CONTRACT
+
+  @@map("billing_interval")
+}
+
+enum PriceStatus {
+  DRAFT
+  ACTIVE
+  SCHEDULED
+  EXPIRED
+  ARCHIVED
+
+  @@map("price_status")
+}
+
+// ----------------------------------------------------------------------------
+// MembershipPlan — the stable identity for a membership tier (FR-008,
+// FR-009). Admin-configurable tier structure, not a hardcoded enum: `code`
+// is any unique admin-chosen string (e.g. `free`, `member`, `premium`),
+// never a fixed list. One-to-one with a Product of a MEMBERSHIP_* type —
+// the Product carries generic catalog/pricing fields (via ProductPrice),
+// this carries plan-specific tier configuration via PlanVersion.
+// ----------------------------------------------------------------------------
+model MembershipPlan {
+  id String @id @default(uuid()) @db.Uuid
+
+  code String @unique @db.VarChar(60)
+
+  productId String  @unique @map("product_id") @db.Uuid
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  status       MembershipPlanStatus @default(DRAFT)
+  displayOrder Int                  @default(0) @map("display_order")
+
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  versions PlanVersion[]
+
+  @@index([status, displayOrder])
+  @@map("membership_plans")
+}
+
+enum MembershipPlanStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+
+  @@map("membership_plan_status")
+}
+
+// ----------------------------------------------------------------------------
+// PlanVersion — an immutable, versioned snapshot of a MembershipPlan's
+// tier configuration (plan.md Key Entities: "versioned for migration
+// control"; FR-010). At most one version per plan may be PUBLISHED at a
+// time — enforced at the service layer (publishing a version atomically
+// archives the previously-published one in the same transaction) AND by a
+// partial unique index in this migration's raw SQL
+// (`plan_versions_one_published_per_plan`), same "two-layer guarantee"
+// pattern as `course_instructors_one_primary_per_course` (Prisma has no
+// `@@unique(... WHERE ...)` syntax — see docs/lms/DATA_MODEL.md for the
+// precedent this follows).
+// ----------------------------------------------------------------------------
+model PlanVersion {
+  id String @id @default(uuid()) @db.Uuid
+
+  planId String         @map("plan_id") @db.Uuid
+  plan   MembershipPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  versionNumber Int @map("version_number")
+
+  name                 String  @db.VarChar(200)
+  publicDescription    String? @map("public_description") @db.Text
+  internalDescription  String? @map("internal_description") @db.Text
+  targetCustomer       String? @map("target_customer") @db.VarChar(300)
+
+  features String[]
+  limits   Json?
+
+  supportedBillingIntervals BillingInterval[] @map("supported_billing_intervals")
+
+  trialEligible Boolean @default(false) @map("trial_eligible")
+  trialDays     Int?    @map("trial_days")
+
+  /// FR-010 upgrade/downgrade/cancellation/grace-period/refund policy
+  /// CONFIGURATION only — the actual execution engines belong to Part 2+'s
+  /// billing-subscription module; stored here so the plan comparison page
+  /// can display accurate terms today (FR-013).
+  upgradePaths       Json?   @map("upgrade_paths")
+  downgradePaths     Json?   @map("downgrade_paths")
+  cancellationPolicy String? @map("cancellation_policy") @db.Text
+  gracePeriodPolicy  String? @map("grace_period_policy") @db.Text
+  refundPolicy       String? @map("refund_policy") @db.Text
+
+  badgeText String? @map("badge_text") @db.VarChar(60)
+
+  /// FR-013: "any recommended label MUST be driven by a truthful,
+  /// server-evaluated business rule." Part 1 has no subscription/usage
+  /// data yet to compute real popularity from, so this is an explicit,
+  /// server-stored, non-client-settable REASON code (never a bare
+  /// boolean an admin flips arbitrarily) — see docs/billing/DECISION_GATES.md
+  /// for why a usage-data-driven rule is deferred to Part 2+.
+  recommendedReason RecommendedReason? @map("recommended_reason")
+
+  status      PlanVersionStatus @default(DRAFT)
+  publishedAt DateTime?         @map("published_at") @db.Timestamptz(6)
+  archivedAt  DateTime?         @map("archived_at") @db.Timestamptz(6)
+
+  createdBy String?  @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  entitlements PlanEntitlement[]
+
+  @@unique([planId, versionNumber])
+  @@index([planId, status])
+  @@map("plan_versions")
+}
+
+enum PlanVersionStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+
+  @@map("plan_version_status")
+}
+
+enum RecommendedReason {
+  BEST_VALUE
+  MOST_POPULAR
+  EDITOR_CHOICE
+
+  @@map("plan_recommended_reason")
+}
+
+// ----------------------------------------------------------------------------
+// PlanEntitlement — a specific capability/limit a PlanVersion grants
+// (FR-012). This is catalog CONFIGURATION only — "what does holding this
+// plan entitle a customer to" — never a per-user runtime grant record;
+// the actual grant-checking against a live Subscription is Part 2+'s
+// billing-catalog entitlement service, which this table's rows feed once
+// Subscription exists (see docs/lms/ENTITLEMENT_BOUNDARY.md for the exact
+// LMS-side consumer boundary this was written against).
+// ----------------------------------------------------------------------------
+model PlanEntitlement {
+  id String @id @default(uuid()) @db.Uuid
+
+  planVersionId String      @map("plan_version_id") @db.Uuid
+  planVersion   PlanVersion @relation(fields: [planVersionId], references: [id], onDelete: Cascade)
+
+  key   String          @db.VarChar(120)
+  type  EntitlementType
+  value Json
+
+  description  String? @db.Text
+  displayOrder Int     @default(0) @map("display_order")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([planVersionId, key])
+  @@index([planVersionId])
+  @@map("plan_entitlements")
+}
+
+enum EntitlementType {
+  BOOLEAN_ACCESS
+  NUMERIC_QUOTA
+  CURRENCY_CREDIT
+  PERCENTAGE_DISCOUNT
+  CONTENT_SCOPE
+  ROLE_GRANT
+  TIME_LIMITED_ACCESS
+  USAGE_RESET
+  SEAT_BASED_ACCESS
+  REGION_RESTRICTED_ACCESS
+
+  @@map("entitlement_type")
+}

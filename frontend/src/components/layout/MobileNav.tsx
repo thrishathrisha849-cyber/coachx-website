@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import type { NavTreeNode } from '@/types/cms.types';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
 import { SAFE_EXTERNAL_REL } from '@/utils/url';
+import { env } from '@/config/env';
 
 interface MobileNavProps {
   items: NavTreeNode[];
@@ -53,8 +54,8 @@ export function MobileNav({ items, open, onClose }: MobileNavProps) {
       aria-labelledby={DIALOG_TITLE_ID}
     >
       <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
-        <span id={DIALOG_TITLE_ID} className="text-lg font-semibold text-brand-600 dark:text-brand-400">
-          Menu
+        <span id={DIALOG_TITLE_ID}>
+          <img src="/images/coachx-logo.jpeg" alt={env.appName} className="h-7 w-auto" />
         </span>
         <button
           type="button"

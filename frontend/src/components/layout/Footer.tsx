@@ -28,7 +28,7 @@ export function Footer() {
       <div className="mx-auto max-w-6xl px-4 py-10">
         <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-5">
           <div className="lg:col-span-2">
-            <span className="text-lg font-semibold text-brand-600 dark:text-brand-400">{env.appName}</span>
+            <img src="/images/coachx-logo.jpeg" alt={env.appName} className="h-8 w-auto" />
             <p className="mt-2 max-w-xs text-sm text-slate-600 dark:text-slate-400">
               A Tamil-first business, learning, and community platform.
             </p>

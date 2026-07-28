@@ -87,13 +87,13 @@ export function CourseListPage() {
           onChange={(e) => setInputValue(e.target.value)}
           placeholder="Search courses…"
           aria-label="Search courses"
-          className="min-w-[200px] flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+          className="min-w-[200px] flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30"
         />
         <select
           value={categoryId ?? ''}
           onChange={(e) => updateParam('categoryId', e.target.value || undefined)}
           aria-label="Filter by category"
-          className="rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+          className="rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30"
         >
           <option value="">All categories</option>
           {categories.map((c) => (
@@ -106,7 +106,7 @@ export function CourseListPage() {
           value={level ?? ''}
           onChange={(e) => updateParam('level', e.target.value || undefined)}
           aria-label="Filter by level"
-          className="rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+          className="rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30"
         >
           <option value="">All levels</option>
           {LEVELS.map((lvl) => (

@@ -54,7 +54,7 @@ describe('Header — Navigation (002 FR-001–FR-004, "Do not hardcode menu item
     vi.mocked(cmsApi.fetchNavigation).mockRejectedValue(new Error('network error'));
     renderHeader();
     // App name / logo should still render even if nav fails.
-    await waitFor(() => expect(screen.getByText('CoachX')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByAltText('CoachX')).toBeInTheDocument());
   });
 
   it('has no accessibility violations', async () => {

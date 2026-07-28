@@ -37,7 +37,7 @@ export function FaqAccordion({ groups }: { groups: FaqCategoryGroup[] }) {
         onChange={(e) => setQuery(e.target.value)}
         placeholder="Search FAQs…"
         aria-label="Search FAQs"
-        className="mb-6 w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+        className="mb-6 w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30"
       />
 
       {filteredGroups.map((group) => (

@@ -80,6 +80,15 @@ export const BASELINE_PERMISSIONS: BaselinePermission[] = [
   { key: 'course.manageInstructors', description: 'Assign/remove/set-primary course instructors (006 LMS instructor assignment)' },
   { key: 'course.module.manage', description: 'Create/edit/reorder/archive course modules (006 LMS course modules)' },
   { key: 'course.category.manage', description: 'Create/edit/reorder/archive course categories (006 LMS course categories)' },
+
+  // --- Phase 7 Part 1 (Billing Foundation: Products/Plans/Pricing) -----
+  // One permission covers the whole catalog surface (products, prices,
+  // membership plans, plan versions/publish/archive, plan entitlements) —
+  // same "deliberately small, not a full platform permission catalog"
+  // discipline this file documents at the top, matching how
+  // `course.category.manage` covers its whole nested surface rather than
+  // one permission per admin action. See docs/billing/RBAC.md.
+  { key: 'billing.catalog.manage', description: 'Create/edit/publish/archive Products, Prices, Membership Plans, Plan Versions, and Plan Entitlements (009 FR-001–FR-014)' },
 ];
 
 /**
@@ -115,7 +124,7 @@ export const ROLE_PERMISSION_GRANTS: Record<RoleName, string[]> = {
     'course.category.manage',
     'content.manage',
   ],
-  finance_admin: ['course.view', 'payment.refund'],
+  finance_admin: ['course.view', 'payment.refund', 'billing.catalog.manage'],
   platform_admin: [
     'course.view',
     'course.create',
@@ -131,6 +140,7 @@ export const ROLE_PERMISSION_GRANTS: Record<RoleName, string[]> = {
     'user.role.assign',
     'ticket.manage',
     'content.manage',
+    'billing.catalog.manage',
   ],
   super_admin: BASELINE_PERMISSIONS.map((p) => p.key),
   organization_admin: ['course.view', 'organization.manage_own'],

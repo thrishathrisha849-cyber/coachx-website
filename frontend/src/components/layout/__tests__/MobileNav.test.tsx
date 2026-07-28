@@ -27,7 +27,7 @@ describe('MobileNav — dialog accessibility (002 FR-003, FR-108)', () => {
     );
     const dialog = screen.getByRole('dialog');
     expect(dialog).toHaveAttribute('aria-modal', 'true');
-    expect(dialog).toHaveAccessibleName('Menu');
+    expect(dialog).toHaveAccessibleName('CoachX');
   });
 
   it('calls onClose when Escape is pressed', () => {
