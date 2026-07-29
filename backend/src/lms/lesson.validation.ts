@@ -21,6 +21,12 @@ export const LESSON_COMPLETION_RULE_TYPES = [
   'MINIMUM_WATCH_PERCENT',
   'ALL_ACTIVITIES_VIEWED',
   'INSTRUCTOR_APPROVAL',
+  // 004 US3 (Quiz System batch) — satisfied once the enrollment has passed
+  // this lesson's attached Quiz (see completion.service.ts).
+  'QUIZ_PASS',
+  // 004 US4 (Assignment System batch) — satisfied once the enrollment has
+  // an APPROVED Submission for this lesson's attached Assignment.
+  'ASSIGNMENT_APPROVED',
 ] as const;
 
 export const LESSON_STATUS_VALUES = ['DRAFT', 'PUBLISHED', 'ARCHIVED'] as const;

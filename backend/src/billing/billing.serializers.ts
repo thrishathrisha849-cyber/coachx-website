@@ -31,6 +31,10 @@ type ProductRow = {
   pricingModel: string;
   currency: string;
   fulfilmentMethod: string;
+  isSponsored: boolean;
+  sponsorLabel: string | null;
+  isAffiliate: boolean;
+  affiliateDisclosure: string | null;
   taxCategory: string | null;
   sellerId: string | null;
   availabilityStartAt: Date | null;
@@ -60,6 +64,10 @@ export function toPublicProduct(row: ProductRow): PublicProduct {
     pricingModel: row.pricingModel,
     currency: row.currency,
     fulfilmentMethod: row.fulfilmentMethod,
+    isSponsored: row.isSponsored,
+    sponsorLabel: row.sponsorLabel,
+    isAffiliate: row.isAffiliate,
+    affiliateDisclosure: row.affiliateDisclosure,
   };
 }
 

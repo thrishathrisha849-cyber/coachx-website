@@ -1,12 +1,13 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { loginAccount, requestPasswordReset } from '@/api/auth.api';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { requestPasswordReset } from '@/api/auth.api';
 import type { NormalizedApiError } from '@/api/client';
 import { useDocumentHead } from '@/hooks/useDocumentHead';
+import { useAuth, MfaRequiredError } from '@/context/auth.context';
 import { env } from '@/config/env';
 
-/** Redirect target after a successful login. No member dashboard/protected area exists yet — home is the only sensible destination. */
-const POST_LOGIN_REDIRECT = '/';
+/** 003 US2: redirect to onboarding by default (the dashboard itself redirects a not-yet-onboarded member back here, so onboarding is always the safe first stop after login); a protected page the user was bounced from (`RequireAuth`'s `state.from`) takes priority when present. */
+const DEFAULT_POST_LOGIN_REDIRECT = '/onboarding';
 const POST_LOGIN_REDIRECT_DELAY_MS = 1200;
 
 interface FormState {
@@ -30,6 +31,8 @@ const initialState: FormState = { email: '', password: '', rememberMe: false };
  */
 export function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { login } = useAuth();
   const [form, setForm] = useState<FormState>(initialState);
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<'email' | 'password', string>>>({});
   const [status, setStatus] = useState<'idle' | 'submitting' | 'success' | 'error'>('idle');
@@ -37,11 +40,13 @@ export function LoginPage() {
   const [mfaRequired, setMfaRequired] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
+  const redirectTarget = (location.state as { from?: string } | null)?.from ?? DEFAULT_POST_LOGIN_REDIRECT;
+
   useEffect(() => {
     if (status !== 'success') return;
-    const timer = setTimeout(() => navigate(POST_LOGIN_REDIRECT), POST_LOGIN_REDIRECT_DELAY_MS);
+    const timer = setTimeout(() => navigate(redirectTarget), POST_LOGIN_REDIRECT_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [status, navigate]);
+  }, [status, navigate, redirectTarget]);
 
   const [mode, setMode] = useState<'login' | 'forgot-password'>('login');
   const [resetEmail, setResetEmail] = useState('');
@@ -71,20 +76,14 @@ export function LoginPage() {
     setMfaRequired(false);
 
     try {
-      const result = await loginAccount({ email: form.email.trim(), password: form.password });
-
-      if (result.mfaRequired) {
+      await login(form.email.trim(), form.password, form.rememberMe);
+      setStatus('success');
+    } catch (err) {
+      if (err instanceof MfaRequiredError) {
         setMfaRequired(true);
         setStatus('idle');
         return;
       }
-
-      const storage = form.rememberMe ? window.localStorage : window.sessionStorage;
-      storage.setItem('coachx_access_token', result.accessToken);
-      storage.setItem('coachx_refresh_token', result.refreshToken);
-
-      setStatus('success');
-    } catch (err) {
       setStatus('error');
       setServerError((err as NormalizedApiError).message ?? 'Something went wrong. Please try again.');
     }

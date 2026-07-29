@@ -26,6 +26,7 @@ import {
 import { findVisibleModulesByCourse } from './module.repository';
 import { toAdminCourse, toPublicCourse, toPublicCourseWithModules } from './lms.serializers';
 import type { AdminCourse, PublicCourse, PublicCourseWithModules } from './lms.types';
+import { snapshotCourseIfPublished } from './course-version.service';
 
 export interface CourseInput {
   title: string;
@@ -144,6 +145,10 @@ export async function updateExistingCourse(
     if (existing.status === 'ARCHIVED' || existing.status === 'RETIRED') {
       throw AppError.badRequest(`Cannot modify a course with status ${existing.status} — restore it first`);
     }
+
+    // 001 FR-099 — snapshot the PRIOR state before overwriting, but only
+    // when it was actually published (nothing to preserve for a draft).
+    await snapshotCourseIfPublished(existing, actorId, tx);
 
     const updated = await updateCourse(
       id,

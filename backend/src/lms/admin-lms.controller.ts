@@ -21,6 +21,7 @@ import {
   getCourseAdmin,
   listCoursesAdmin,
 } from './course.service';
+import { listCourseVersions } from './course-version.service';
 import { assignInstructor, removeInstructor, setPrimaryInstructor, listInstructorsForCourse } from './instructor.service';
 import {
   createCourseModule,
@@ -132,6 +133,12 @@ export const getCoursesAdmin = asyncHandler(async (req: Request, res: Response) 
 export const getCourseByIdAdmin = asyncHandler(async (req: Request, res: Response) => {
   const course = await getCourseAdmin(req.params.id);
   res.status(200).json(buildSuccessResponse(course));
+});
+
+/** 001 FR-099 — non-destructive published-content version history. */
+export const getCourseVersionsAdmin = asyncHandler(async (req: Request, res: Response) => {
+  const versions = await listCourseVersions(req.params.id);
+  res.status(200).json(buildSuccessResponse(versions));
 });
 
 export const patchCourse = asyncHandler(async (req: Request, res: Response) => {

@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { seedRbac } from './rbac.seed';
 import { seedCms } from './cms.seed';
+import { seedMembershipTiers } from './membership-tier.seed';
 
 /**
  * Seed entrypoint (`npm run db:seed` from the repo root).
@@ -54,6 +55,7 @@ async function main(): Promise<void> {
   console.log('🌱 CoachX database seed runner starting...');
   await seedRbac(prisma);
   await seedCms(prisma);
+  await seedMembershipTiers(prisma);
   console.log('✅ Seed run complete.');
 }
 

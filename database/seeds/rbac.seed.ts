@@ -55,6 +55,12 @@ const BASELINE_PERMISSIONS = [
   // Phase 7 Part 1 (Billing Foundation) — see backend/src/auth/rbac.constants.ts
   // and docs/billing/RBAC.md.
   'billing.catalog.manage',
+  // 001 Governance Foundation — see backend/src/auth/rbac.constants.ts.
+  // `community.moderate` is reused for Trust & Safety case review/action.
+  'organization.create',
+  'milestone.verify',
+  'governance.manage',
+  'kpi.view',
 ] as const;
 
 const ROLE_PERMISSION_GRANTS: Record<(typeof ROLE_NAMES)[number], string[]> = {
@@ -76,7 +82,7 @@ const ROLE_PERMISSION_GRANTS: Record<(typeof ROLE_NAMES)[number], string[]> = {
     'course.category.manage',
     'content.manage',
   ],
-  finance_admin: ['course.view', 'payment.refund', 'billing.catalog.manage'],
+  finance_admin: ['course.view', 'payment.refund', 'billing.catalog.manage', 'kpi.view'],
   platform_admin: [
     'course.view',
     'course.create',
@@ -93,6 +99,10 @@ const ROLE_PERMISSION_GRANTS: Record<(typeof ROLE_NAMES)[number], string[]> = {
     'ticket.manage',
     'content.manage',
     'billing.catalog.manage',
+    'organization.create',
+    'milestone.verify',
+    'governance.manage',
+    'kpi.view',
   ],
   super_admin: [...BASELINE_PERMISSIONS],
   organization_admin: ['course.view', 'organization.manage_own'],

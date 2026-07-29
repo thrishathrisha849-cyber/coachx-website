@@ -52,7 +52,7 @@ export const updatePageSchema = z.object({
 export const updatePageStatusSchema = z.object({
   params: z.object({ id: z.string().uuid() }),
   body: z.object({
-    status: z.enum(['DRAFT', 'REVIEW', 'APPROVED', 'SCHEDULED', 'PUBLISHED', 'ARCHIVED']),
+    status: z.enum(['DRAFT', 'REVIEW', 'APPROVED', 'SCHEDULED', 'PUBLISHED', 'UNPUBLISHED', 'ARCHIVED']),
   }),
 });
 

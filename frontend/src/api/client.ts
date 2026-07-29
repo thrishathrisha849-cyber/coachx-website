@@ -1,13 +1,13 @@
 import axios, { AxiosError, type InternalAxiosRequestConfig } from 'axios';
 import { env } from '@/config/env';
+import { tokenStore } from './token-store';
 
 /**
  * Single, shared Axios instance for every API call in the app.
  *
- * Auth-token attachment and refresh-token retry logic belong to the
- * authentication feature module and are intentionally NOT implemented
- * here yet — Phase 1 only wires the transport layer, interceptor hooks,
- * and a consistent error shape.
+ * 003 US2/US4: attaches the logged-in member's access token (mirrors the
+ * admin app's `client.ts`). Refresh-token rotation is still not wired up —
+ * same documented gap as before, a 401 simply requires a fresh login.
  */
 export const apiClient = axios.create({
   baseURL: env.apiBaseUrl,
@@ -18,9 +18,9 @@ export const apiClient = axios.create({
   },
 });
 
-// Placeholder request interceptor — the auth module will attach the
-// access token here in a later phase.
 apiClient.interceptors.request.use((requestConfig: InternalAxiosRequestConfig) => {
+  const token = tokenStore.get();
+  if (token) requestConfig.headers.set('Authorization', `Bearer ${token}`);
   return requestConfig;
 });
 

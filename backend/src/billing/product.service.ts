@@ -41,6 +41,11 @@ export interface ProductInput {
   maxQuantity?: number;
   refundPolicy?: string;
   termsVersion?: string;
+  /// 001 FR-062/FR-063 — sponsored/affiliate disclosure metadata.
+  isSponsored?: boolean;
+  sponsorLabel?: string;
+  isAffiliate?: boolean;
+  affiliateDisclosure?: string;
 }
 
 export type ProductUpdateInput = Partial<ProductInput>;
@@ -108,6 +113,10 @@ export async function createProductCatalogItem(input: ProductInput, actorId: str
         maxQuantity: input.maxQuantity,
         refundPolicy: input.refundPolicy,
         termsVersion: input.termsVersion,
+        isSponsored: input.isSponsored ?? false,
+        sponsorLabel: input.sponsorLabel,
+        isAffiliate: input.isAffiliate ?? false,
+        affiliateDisclosure: input.affiliateDisclosure,
         createdBy: actorId,
         updatedBy: actorId,
       },
@@ -153,6 +162,10 @@ export async function updateExistingProduct(
         ...(input.maxQuantity !== undefined ? { maxQuantity: input.maxQuantity } : {}),
         ...(input.refundPolicy !== undefined ? { refundPolicy: input.refundPolicy } : {}),
         ...(input.termsVersion !== undefined ? { termsVersion: input.termsVersion } : {}),
+        ...(input.isSponsored !== undefined ? { isSponsored: input.isSponsored } : {}),
+        ...(input.sponsorLabel !== undefined ? { sponsorLabel: input.sponsorLabel } : {}),
+        ...(input.isAffiliate !== undefined ? { isAffiliate: input.isAffiliate } : {}),
+        ...(input.affiliateDisclosure !== undefined ? { affiliateDisclosure: input.affiliateDisclosure } : {}),
         version: { increment: 1 },
         updatedBy: actorId,
       },

@@ -137,6 +137,11 @@ const productBodyBase = z.object({
   maxQuantity: z.number().int().min(1).max(1_000_000).optional(),
   refundPolicy: z.string().max(5000).optional(),
   termsVersion: z.string().max(40).optional(),
+  // 001 FR-062/FR-063 — sponsored/affiliate disclosure metadata.
+  isSponsored: z.boolean().default(false),
+  sponsorLabel: z.string().max(120).optional(),
+  isAffiliate: z.boolean().default(false),
+  affiliateDisclosure: z.string().max(300).optional(),
 });
 
 export const createProductSchema = z.object({ body: productBodyBase });

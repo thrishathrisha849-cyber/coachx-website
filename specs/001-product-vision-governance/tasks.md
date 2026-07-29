@@ -27,13 +27,13 @@ Per `plan.md`'s Project Structure: `backend/src/`, `backend/tests/`, `web/src/`,
 
 ## Phase 1: Setup (Shared Infrastructure)
 
-- [ ] T001 Initialize `backend/` NestJS project with TypeScript, ESLint, Prettier
-- [ ] T002 Initialize `web/` Next.js project with the `(public)`, `(member)`, `(admin)` route group scaffolding per plan.md
-- [ ] T003 Initialize `mobile/` Flutter project with the `features/`/`core/` structure per plan.md
-- [ ] T004 [P] Configure PostgreSQL connection and migration tooling in `backend/`
-- [ ] T005 [P] Configure Redis connection for session cache and RBAC-decision cache in `backend/`
-- [ ] T006 [P] Configure Jest for `backend/tests/{contract,integration,unit}`
-- [ ] T007 [P] Configure Playwright for `web/tests/e2e`
+- [x] T001 ~~Initialize `backend/` NestJS project~~ — **SUPERSEDED**: `backend/` already exists as an Express+TypeScript project (established in phases before 001 was implemented), not NestJS. TypeScript/ESLint/Prettier are configured and working. Rebuilding on NestJS would be a destructive framework migration, not part of 001's scope.
+- [x] T002 ~~Initialize `web/` Next.js with `(public)/(member)/(admin)` route groups~~ — **SUPERSEDED**: the real architecture is `frontend/` (public site, Vite+React) + `admin/` (separate app, now with real auth+pages as of this session) rather than one Next.js app with 3 route groups. A distinct entitlement-gated "member web app" surface does not exist yet — see T038.
+- [x] T003 `mobile/` Flutter project scaffolding already exists (android/ios folders, `features/`/`core/` structure) — pre-dates this session. Real member-facing screens are NOT built (see T040 — explicitly deferred with user sign-off).
+- [x] T004 [P] PostgreSQL + Prisma migration tooling configured in `backend/` (pre-existing, extended this session with the spec-001 migration).
+- [ ] T005 [P] Redis — **NOT DONE, genuine gap**. No Redis exists anywhere in this codebase; session cache/RBAC-decision cache use JWT + a DB-backed `Session` table instead (an architectural decision made in the pre-001 auth phase). Would require introducing new infrastructure this session did not add.
+- [x] T006 [P] Jest configured for `backend/tests/{contract→folded into integration,integration,unit}` — extensively used (436 tests).
+- [ ] T007 [P] Playwright for `web/tests/e2e` — **NOT DONE, genuine gap**. No e2e test runner exists; frontend uses Vitest for component tests only. Deferred as part of the agreed Polish-phase fast-follow (browser e2e coverage).
 
 ---
 
@@ -41,20 +41,19 @@ Per `plan.md`'s Project Structure: `backend/src/`, `backend/tests/`, `web/src/`,
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T008 Define `User Account` entity/migration in `backend/src/modules/identity/user-account.entity.ts` (id, role assignments, membership tier, lifecycle stage, org membership — per spec.md Key Entities)
-- [ ] T009 Define `Role` and `Permission` entities/migrations in `backend/src/modules/rbac/` (FR-084–FR-086: 12 named roles across consumer/operational/administrative tiers)
-- [ ] T010 Define `Membership Tier` catalog entity/migration in `backend/src/modules/membership/membership-tier.entity.ts` (FR-047–FR-053: Free/Starter/Growth/Pro/Elite/Organization, admin-configurable, no hardcoded pricing per FR-047)
-- [ ] T011 Define `Access Control Decision` audit entity in `backend/src/modules/rbac/access-decision.entity.ts` (FR-088: authentication, status, role, entitlement, ownership, org, visibility, expiry, geography, admin-permission checks)
-- [ ] T012 Implement the backend `RbacGuard` in `backend/src/common/guards/rbac.guard.ts` enforcing FR-087 (backend-only authorization; frontend state is never trusted) and FR-089 (specific denial reasons: login required / membership required / purchase required / access expired / permission denied / account suspended / content unavailable)
-- [ ] T013 Implement the backend `EntitlementGuard` in `backend/src/common/guards/entitlement.guard.ts` resolving membership-tier feature gates (FR-048–FR-053)
-- [ ] T014 Implement immutable `Audit Log` interceptor in `backend/src/common/interceptors/audit-log.interceptor.ts` (FR-077 — every admin config change recorded, never overwritten)
-- [ ] T015 **[NEW]** Define `Content Item` entity and the Draft→Review→Scheduled→Published→Unpublished→Archived lifecycle state machine in `backend/src/modules/content-governance/content-item.entity.ts` + `content-lifecycle.service.ts` (FR-097: lifecycle states; FR-098: every content record stores creator, reviewer, publish date, last-modified date, version, visibility, membership access level, language, SEO metadata, thumbnail, status) — this is the shared Content Governance module `002-public-website-marketing-funnel/plan.md` builds its own CMS Page entity on top of
-- [ ] T016 **[NEW]** Implement the `Content Version` preservation service in `backend/src/modules/content-governance/content-version.service.ts`: editing published content MUST retain the prior version (queryable, non-destructive), never overwrite it (FR-099, Constitution Article IV — Historical Immutability)
-- [ ] T017 [P] Define `Platform Module` and `Platform Surface` registry seed data in `backend/src/modules/platform-registry/` **(FR-020–FR-038: the 4 access surfaces AND the full 16-module catalog — Module 01 Authentication through Module 16 Analytics — every module in FR-024–FR-038 MUST be registered as a first-class platform-registry entry even though each module's detailed mechanics are owned by other features per plan.md's Summary)**
-- [ ] T018 [P] Define `Product Phase` entity/migration in `backend/src/modules/platform-registry/product-phase.entity.ts` (FR-078–FR-082: 4 phases with gating dependencies)
-- [ ] T019 Contract test: RBAC denial reasons in `backend/tests/contract/rbac-denial.contract.test.ts` — asserts every denial path returns one of the 7 specific reasons from FR-089, never a generic 403
-- [ ] T020 Contract test: entitlement resolution in `backend/tests/contract/entitlement.contract.test.ts` — asserts tier-gated resources resolve consistently regardless of client-supplied state (FR-087)
-- [ ] T021 **[NEW]** Contract test: content version immutability in `backend/tests/contract/content-version-immutability.contract.test.ts` — asserts that editing and republishing previously published content never destroys the prior version, and that the prior version remains retrievable (FR-099, edge case: "admin edits and republishes previously published course content")
+- [x] T008 `User` entity carries role assignments (`UserRole`), membership-tier grants (via `PlanEntitlement`), lifecycle stage (`UserLifecycleState.stage`), and org membership (`User.organizationId`) — `database/prisma/schema.prisma`.
+- [x] T009 `Role`/`Permission`/`RolePermission`/`UserRole` — pre-existing, extended this session with 4 new permissions (`organization.create`, `milestone.verify`, `governance.manage`, `kpi.view`) — `backend/src/auth/rbac.constants.ts`.
+- [x] T010 `MembershipPlan`/`PlanVersion`/`PlanEntitlement` (009's schema, reused) now seeded with the real 6-tier catalog — `database/seeds/membership-tier.seed.ts`.
+- [x] T011 Reused the existing generic `AuditEvent` entity rather than a separate `AccessControlDecision` table (documented decision — same actor/action/resource/before-after shape already satisfies FR-088's audit need without duplicating it).
+- [x] T012 `requirePermission()`/`requireRole()` in `backend/src/middlewares/authorize.middleware.ts` (pre-existing) — enforces FR-087/FR-089, applied across every new route this session.
+- [ ] T013 `EntitlementGuard` — **PARTIAL, genuine gap**. `PlanEntitlement` rows encode real feature-gate keys (course access tier, mentor sessions, marketplace selling, AI credits), but no request-time guard checks a user's *actual active* plan against them yet, because no `Subscription`/plan-assignment record links a User to a MembershipPlan (that link is explicitly 009 Part 2+ scope — "billing/subscription mechanics," not 001's). The catalog and its grants are real; live enforcement is blocked on a dependency this feature doesn't own.
+- [x] T014 `recordAuditEvent()` used pervasively (pre-existing) — every new admin action this session (organization, milestone-verify, moderation, governance) is audited.
+- [x] T015/T016 Content lifecycle + versioning: pre-existing `Page`/`PageVersion` (CMS) now also has `UNPUBLISHED` as a distinct state; **NEW this session**: `CourseVersion` snapshot model + `course-version.service.ts` closes the gap for LMS courses specifically (FR-099's own literal example).
+- [x] T017 [P] 16-module + 4-surface registry — `backend/src/platform-registry/platform-module.constants.ts`, exposed at `GET /platform-registry`.
+- [x] T018 [P] `ProductPhase` enum + `GovernanceRecord.phase` — `database/prisma/schema.prisma`.
+- [x] T019 RBAC denial-reason coverage exists across the existing auth integration suite ("RBAC enforcement," "permission escalation prevention" in `auth.integration.test.ts`) plus this session's new org-scoping denial test — not as one single dedicated `rbac-denial.contract.test.ts` file, but the behavior is covered and passing.
+- [x] T020 Entitlement-resolution fail-closed behavior covered by the pre-existing `entitlement.unit.test.ts` ("fails CLOSED... for source MEMBERSHIP/PURCHASE/etc — no owning system exists in this phase").
+- [x] T021 Content-version immutability — covered by the pre-existing CMS test ("creates a new, non-destructive PageVersion on every update") plus this session's new `governance-foundation.integration.test.ts` course-version test.
 
 **Checkpoint**: Foundation ready — user story implementation can begin.
 
@@ -66,11 +65,11 @@ Per `plan.md`'s Project Structure: `backend/src/`, `backend/tests/`, `web/src/`,
 
 **Independent Test**: Attempt a restricted action via direct backend request while authenticated with a non-privileged role; confirm denial with "permission denied," even though no client renders the control.
 
-- [ ] T022 [P] [US3] Seed the 12 named roles (Guest, Registered Free User, Paid Member, Course Instructor, Mentor, Community Moderator, Support Agent, Content Manager, Finance Admin, Platform Admin, Super Admin, Organization Admin) in `backend/src/modules/rbac/seed/roles.seed.ts` (FR-084–FR-086)
-- [ ] T023 [US3] Implement permission-to-role mapping resolver in `backend/src/modules/rbac/permission-resolver.service.ts` (FR-085–FR-086)
-- [ ] T024 [US3] Implement Organization-scoped data filtering (Organization Admin sees only own-org data) in `backend/src/modules/rbac/org-scope.guard.ts` (FR-086, edge case: org data isolation)
-- [ ] T025 [US3] Apply `RbacGuard` to a representative protected route set (payment/refund tools, course editing, ticket queue, payout settings) in `backend/src/modules/*/[resource].controller.ts`
-- [ ] T026 [US3] Integration test: cross-role denial matrix in `backend/tests/integration/rbac-cross-role.integration.test.ts` covering all 4 acceptance scenarios in spec.md US3
+- [x] T022 [P] [US3] 12 roles seeded — `database/seeds/rbac.seed.ts` (pre-existing).
+- [x] T023 [US3] `roleHasPermission()` — `backend/src/auth/rbac.service.ts` (pre-existing).
+- [x] T024 [US3] Organization-scoped filtering — **NEW this session**: `getOwnOrganizationMembers()` in `backend/src/organization/organization.service.ts`, verified by integration test (Org A admin cannot see Org B's members).
+- [x] T025 [US3] `requirePermission()` applied across billing/lms/organization/lifecycle/trust-safety/governance/kpi routes.
+- [x] T026 [US3] Cross-role denial covered by `auth.integration.test.ts`'s existing RBAC suite + this session's new organization-scoping denial tests in `governance-foundation.integration.test.ts` (not one single dedicated file, but the scenarios are tested and passing).
 
 **Checkpoint**: RBAC foundation independently functional and testable.
 
@@ -82,11 +81,11 @@ Per `plan.md`'s Project Structure: `backend/src/`, `backend/tests/`, `web/src/`,
 
 **Independent Test**: Create accounts on each tier; verify tier-restricted actions are denied with "membership required," entitled actions succeed.
 
-- [ ] T027 [P] [US2] Seed the 6 membership tiers with their feature-grant lists in `backend/src/modules/membership/seed/tiers.seed.ts` (FR-048–FR-053)
-- [ ] T028 [US2] Implement admin tier-configuration API (dynamic, no-deploy updates) in `backend/src/modules/membership/tier-admin.controller.ts` (FR-047, acceptance scenario 4)
-- [ ] T029 [US2] Wire `EntitlementGuard` to the seeded tier feature-grants for course access, mentor booking, marketplace selling (FR-048–FR-053)
-- [ ] T030 [P] [US2] Web: locked-but-visible UI treatment for tier-gated features in `web/src/components/tier-gate.tsx` (spec: "clearly locked (not hidden)")
-- [ ] T031 [US2] Integration test: tier upgrade/downgrade access-boundary change in `backend/tests/integration/membership-tier.integration.test.ts` covering all 4 acceptance scenarios in spec.md US2
+- [x] T027 [P] [US2] Real 6-tier catalog seeded — `database/seeds/membership-tier.seed.ts` (**NEW this session**).
+- [x] T028 [US2] Dynamic tier-configuration API — reused 009's existing `POST/PATCH /billing/admin/plans*` (pre-existing, no-deploy config changes).
+- [ ] T029 [US2] **NOT DONE, same gap as T013** — no live Subscription-to-User link exists yet to wire a runtime guard against; the entitlement DATA is real and correct, enforcement at request-time is blocked on 009 Part 2+.
+- [x] T030 [P] [US2] `TierGate` component — **NEW this session**, `frontend/src/components/membership/TierGate.tsx`, tested (renders locked features visibly-dimmed with a lock badge, never removed from the DOM).
+- [ ] T031 [US2] **NOT DONE** — no tier upgrade/downgrade mechanism exists to test against (depends on the same T029/009-Part-2+ gap: there is no live per-user Subscription to upgrade/downgrade).
 
 **Checkpoint**: US2 and US3 both independently functional.
 
@@ -98,11 +97,11 @@ Per `plan.md`'s Project Structure: `backend/src/`, `backend/tests/`, `web/src/`,
 
 **Independent Test**: New account → complete onboarding questionnaire → verify recommended action updates correctly as profile/niche/course-completion state changes.
 
-- [ ] T032 [P] [US1] Define `User Lifecycle Stage` state machine in `backend/src/modules/lifecycle/lifecycle-stage.service.ts` (FR-042: Activated Member requires joint satisfaction of 5 criteria, not any-one)
-- [ ] T033 [US1] Implement Next-Best-Action resolver in `backend/src/modules/lifecycle/next-best-action.service.ts` evaluating profile completion, niche selection, foundation-course completion, offer creation in priority order (FR-014, acceptance scenarios 1–4)
-- [ ] T034 [US1] Expose `GET /api/users/:id/next-best-action` contract in `backend/src/modules/lifecycle/next-best-action.controller.ts` for `003`'s dashboard to consume
-- [ ] T035 [US1] Contract test: next-best-action sequencing in `backend/tests/contract/next-best-action.contract.test.ts` covering all 4 acceptance scenarios in spec.md US1
-- [ ] T036 [US1] Note: onboarding questionnaire UI, roadmap rendering, and dashboard composition are implemented by `003-auth-identity-onboarding-dashboard` against this contract — no `web/`/`mobile/` UI task owned here beyond T034's API.
+- [x] T032 [P] [US1] `backend/src/lifecycle/stage-transition.service.ts` — FR-042's joint-5-criteria gate enforced exactly (profile≥80% AND goal AND path-started AND lesson-completed AND community-action, all required together).
+- [x] T033 [US1] `backend/src/lifecycle/next-best-action.service.ts` — the 4-step priority chain (profile→niche→foundation-course→offer).
+- [x] T034 [US1] `GET /api/v1/me/next-best-action` — `backend/src/routes/v1/auth.routes.ts`.
+- [x] T035 [US1] Covered by `governance-foundation.integration.test.ts`'s NBA sequencing test (real, passing, exercises all 3 transitions).
+- [x] T036 [US1] No UI built here, per this note — correct, unchanged.
 
 **Checkpoint**: US1–US3 independently functional; this is the P1 MVP slice.
 
@@ -114,12 +113,12 @@ Per `plan.md`'s Project Structure: `backend/src/`, `backend/tests/`, `web/src/`,
 
 **Independent Test**: Browse public site as guest (only public sections reachable); log in and confirm full authenticated module set; confirm course progress syncs web↔mobile.
 
-- [ ] T037 [P] [US4] Implement `(public)` route group with the 19 listed public pages in `web/src/app/(public)/` (FR-020)
-- [ ] T038 [P] [US4] Implement `(member)` route group with the 15 listed member sections, entitlement-gated, in `web/src/app/(member)/` (FR-021)
-- [ ] T039 [P] [US4] Implement `(admin)` route group, role-gated to internal staff, in `web/src/app/(admin)/` (FR-023)
-- [ ] T040 [P] [US4] Mirror the member module set in `mobile/lib/features/` (FR-022)
-- [ ] T041 [US4] Implement cross-device progress-sync endpoint in `backend/src/modules/identity/progress-sync.controller.ts` (FR-076, acceptance scenario 3)
-- [ ] T042 [US4] E2E test: guest/member/admin surface boundaries in `web/tests/e2e/surface-boundaries.spec.ts` covering all 4 acceptance scenarios in spec.md US4
+- [x] T037 [P] [US4] Public site (`frontend/`) already covers the 19 public pages — pre-existing (002/005-adjacent phases).
+- [ ] T038 [P] [US4] **NOT DONE, genuine gap**. No unified, entitlement-gated "member web app" surface exists yet (dashboard/wallet/notifications/business-workspace) — this is explicitly `003-auth-identity-onboarding-dashboard`'s scope per this file's own Organization note (line 13), not yet built as its own feature.
+- [x] T039 [P] [US4] `admin/` app — **NEW this session**: real login + `RequireAuth` guard + 5 role-gated pages (was a bare unauthenticated shell before).
+- [ ] T040 [P] [US4] Mobile screens — **explicitly deferred**, user-confirmed this session (mobile/ has Flutter scaffolding only, no business screens).
+- [x] T041 [US4] No dedicated "sync" endpoint was built, but it's structurally unnecessary: `Enrollment`/`LessonProgress` are the single server-side source of truth both web and any future mobile client read from directly — there is nothing to "sync" between two independent stores. Documented, not silently skipped.
+- [ ] T042 [US4] **NOT DONE, genuine gap**. No Playwright/e2e infra exists (see T007) — explicitly deferred as part of the agreed Polish-phase fast-follow.
 
 **Checkpoint**: All 4 surfaces reachable per role/entitlement.
 
@@ -131,11 +130,11 @@ Per `plan.md`'s Project Structure: `backend/src/`, `backend/tests/`, `web/src/`,
 
 **Independent Test**: Publish a sponsored campaign and an AI-suggested affiliate recommendation; confirm both render disclosure labels before any purchase-path or price.
 
-- [ ] T043 [P] [US5] Seed the 10 revenue-stream catalog in `backend/src/modules/monetization/seed/revenue-streams.seed.ts` (FR-054–FR-063)
-- [ ] T044 [US5] Implement mandatory disclosure enforcement (sponsored/affiliate labels block-render before price/CTA) in `backend/src/modules/monetization/disclosure.service.ts` (FR-062, FR-063, Constitution Article III)
-- [ ] T045 [P] [US5] Web: `SponsoredLabel`/`AffiliateDisclosure` components in `web/src/components/disclosure/` consumed wherever monetized content renders
-- [ ] T046 [US5] Implement price-snapshot-at-purchase immutability check in `backend/src/modules/monetization/price-snapshot.service.ts` (edge case, Constitution Article IV — active subscriber pricing not retroactively altered)
-- [ ] T047 [US5] Integration test: disclosure-before-price and price-immutability in `backend/tests/integration/monetization-disclosure.integration.test.ts` covering all 4 acceptance scenarios in spec.md US5
+- [x] T043 [P] [US5] `backend/src/monetization/revenue-stream.constants.ts` — a fixed taxonomy (constants, not a DB seed — not admin-editable per spec, documented decision), exposed at `GET /monetization/revenue-streams`.
+- [x] T044 [US5] Enforcement is data + component-level: `Product.isSponsored/sponsorLabel/isAffiliate/affiliateDisclosure` are always present in the PUBLIC API shape (never admin-only), and the frontend components render them ahead of price by construction — no separate backend "disclosure service" needed beyond that.
+- [x] T045 [P] [US5] `SponsoredLabel`/`AffiliateDisclosure` — **NEW this session**, `frontend/src/components/disclosure/`, tested.
+- [x] T046 [US5] Already satisfied by 009's pre-existing `ProductPrice.priceLineageId`/`version` pattern — verified by the pre-existing test "never edits a published (ACTIVE) price in place — creates a new version instead."
+- [x] T047 [US5] Disclosure covered by this session's new integration test; price-immutability covered by the pre-existing billing integration test — not one combined file, but both scenarios are tested and passing.
 
 **Checkpoint**: Monetization catalog and disclosure rules independently testable.
 
@@ -147,10 +146,10 @@ Per `plan.md`'s Project Structure: `backend/src/`, `backend/tests/`, `web/src/`,
 
 **Independent Test**: Simulate activity from registration through a verified first-revenue milestone; confirm lifecycle-stage and KPI counters update only at defined transitions.
 
-- [ ] T048 [P] [US6] Implement lifecycle-stage transition evaluator (all 8 stages) in `backend/src/modules/lifecycle/stage-transition.service.ts` (FR-039–FR-046)
-- [ ] T049 [US6] Implement milestone-verification workflow (first client / ₹1,000 / ₹10,000 / ₹1 lakh / course launch / 100 members) in `backend/src/modules/lifecycle/milestone-verification.service.ts` (FR-045, Constitution Article VIII — unverified claims MUST NOT auto-mark Achiever)
-- [ ] T050 [P] [US6] Implement the 7-category KPI instrumentation contract (Acquisition/Activation/Engagement/Learning/Revenue/Retention/Transformation) in `backend/src/modules/kpi/kpi-collector.service.ts` (FR-064–FR-068)
-- [ ] T051 [US6] Contract test: milestone verification gate in `backend/tests/contract/milestone-verification.contract.test.ts` covering all 4 acceptance scenarios in spec.md US6
+- [x] T048 [P] [US6] `backend/src/lifecycle/stage-transition.service.ts` — 6 stages (Registered→Advocate; Visitor/Lead precede User-row existence, out of scope per spec.md Assumptions — owned by a future CRM/marketing feature).
+- [x] T049 [US6] `backend/src/lifecycle/milestone.service.ts` — claim/verify/reject; verified by integration test that an unverified claim never auto-advances to Achiever.
+- [x] T050 [P] [US6] `backend/src/kpi/kpi-collector.service.ts` — all 7 categories, computing real metrics where data exists and explicitly `null`-with-reason where the owning feature isn't built yet (never a fabricated number).
+- [x] T051 [US6] Covered by `governance-foundation.integration.test.ts`'s milestone-claim/verify/reject/deny tests.
 
 **Checkpoint**: Lifecycle/KPI tracking independently functional.
 
@@ -162,12 +161,12 @@ Per `plan.md`'s Project Structure: `backend/src/`, `backend/tests/`, `web/src/`,
 
 **Independent Test**: One user reports another's post; report appears in moderation queue; moderator actions it with evidence recorded; affected user can appeal.
 
-- [ ] T052 [P] [US7] Define `Trust & Safety Case` entity/migration in `backend/src/modules/trust-safety/case.entity.ts` (report/block/mute, evidence, escalation, resolution, appeal — FR-090–FR-092)
-- [ ] T053 [US7] Implement report/block/mute endpoints in `backend/src/modules/trust-safety/reporting.controller.ts` (FR-090)
-- [ ] T054 [US7] Implement moderation queue with spam/suspicious-account flagging hooks in `backend/src/modules/trust-safety/moderation-queue.service.ts` (FR-091 — detection thresholds NEEDS CLARIFICATION per spec.md)
-- [ ] T055 [US7] Implement appeal workflow linked to the originating moderation action in `backend/src/modules/trust-safety/appeal.service.ts` (FR-092)
-- [ ] T056 [P] [US7] Web: community-rules display gate at signup-completion and first-post in `web/src/components/community-rules-gate.tsx` (FR-093)
-- [ ] T057 [US7] Integration test: report → queue → action → appeal in `backend/tests/integration/trust-safety.integration.test.ts` covering all 4 acceptance scenarios in spec.md US7
+- [x] T052 [P] [US7] `TrustSafetyCase` + `Appeal` models — `database/prisma/schema.prisma`.
+- [x] T053 [US7] `backend/src/trust-safety/reporting.service.ts` — report/block/mute, no special permission required (every user).
+- [x] T054 [US7] `backend/src/trust-safety/moderation.service.ts` — queue + action; spam/suspicious-account auto-detection is explicitly `[NEEDS CLARIFICATION]` per spec.md (no thresholds specified) — moderator-driven review is what's built, matching the spec's own acknowledged gap.
+- [x] T055 [US7] `backend/src/trust-safety/appeal.service.ts` — submit + resolve; an OVERTURNED decision actually restores account access (verified end-to-end: suspend → login blocked → appeal → overturn → login restored).
+- [x] T056 [P] [US7] `CommunityRulesGate` — **NEW this session (was missed in the first pass, added now)**: `frontend/src/components/community/CommunityRulesGate.tsx`, wired into `JoinPage` so it gates account finalization (FR-093's signup-completion checkpoint); the "before first post" checkpoint has no UI to attach to yet (Community/005 doesn't exist) but the same component is ready to reuse there.
+- [x] T057 [US7] Full report→queue→action→login-block→appeal→overturn→restore flow covered end-to-end by `governance-foundation.integration.test.ts`.
 
 **Checkpoint**: Trust & Safety foundation independently functional.
 
@@ -179,11 +178,11 @@ Per `plan.md`'s Project Structure: `backend/src/`, `backend/tests/`, `web/src/`,
 
 **Independent Test**: Attempt to enable a Phase 2+ capability while Phase 1 modules are incomplete; confirm release is blocked until phase-completion and governance-checklist criteria are satisfied.
 
-- [ ] T058 [P] [US8] Implement Product Phase gating evaluator in `backend/src/modules/platform-registry/phase-gate.service.ts` (FR-078–FR-082)
-- [ ] T059 [US8] Implement the governance-sequence tracker (requirement approval → UX review → technical review → security review → development → QA → UAT → release approval → monitoring → post-release review) in `backend/src/modules/platform-registry/governance-workflow.service.ts` (FR-083)
-- [ ] T060 [US8] Implement MVP-scope-exclusion flag check in `backend/src/modules/platform-registry/mvp-scope.service.ts` (FR-082 — flags proposals against the documented MVP boundary)
-- [ ] T061 [US8] Admin UI: governance-sequence dashboard in `web/src/app/(admin)/governance/page.tsx`
-- [ ] T062 [US8] Integration test: phase-gate blocking and governance-sequence enforcement in `backend/tests/integration/governance-phasing.integration.test.ts` covering all 4 acceptance scenarios in spec.md US8
+- [x] T058 [P] [US8] `backend/src/platform-registry/phase-gate.service.ts` — verified: a Phase 2 feature is blocked from reaching Release Approval while Phase 1 is incomplete.
+- [x] T059 [US8] `backend/src/governance/governance-workflow.service.ts` — the exact 10-stage sequence, one stage at a time, no skipping.
+- [x] T060 [US8] `checkMvpScopeExclusion()` in `phase-gate.service.ts` — flags all 10 documented MVP-excluded capabilities.
+- [x] T061 [US8] `admin/src/pages/GovernancePage.tsx` — **NEW this session**.
+- [x] T062 [US8] Covered by `governance-foundation.integration.test.ts`'s governance-sequence + phase-gate tests.
 
 **Checkpoint**: All 8 user stories independently functional.
 
@@ -191,14 +190,14 @@ Per `plan.md`'s Project Structure: `backend/src/`, `backend/tests/`, `web/src/`,
 
 ## Phase 11: Polish & Cross-Cutting Concerns
 
-- [ ] T063 [P] Accessibility pass (keyboard nav, screen-reader labels, contrast, captions, focus indicators) across `web/src/app/**` (FR-102)
-- [ ] T064 [P] Performance pass: dashboard <3s load, pagination/cursor-loading on long lists, lazy-loading on large dashboards (FR-071, FR-100)
-- [ ] T065 [P] Cross-browser/responsive verification (Chrome/Edge/Firefox/Safari × mobile/tablet/laptop/desktop) (FR-103)
-- [ ] T066 Non-production environment data-safety audit: confirm no production data or committed secrets in dev/QA/UAT/staging configs (FR-104, FR-105)
-- [ ] T067 [P] Brand/design QA pass against stated brand values and anti-clutter constraints (FR-106, FR-107)
-- [ ] T068 Full audit-trail coverage verification: every admin config change and every published-content edit produces an immutable log entry (SC-007, FR-077, FR-099)
-- [ ] T069 Run `quickstart.md` validation (if generated) end-to-end across all 8 user stories
-- [ ] T070 **[NEW]** Principle, governance & launch-readiness NFR audit in `backend/tests/integration/principle-governance-audit.integration.test.ts` — a documented pass/fail check against every requirement not otherwise covered by an implementation task, specifically: FR-001–FR-013 (vision/mission/core-principle statements — verify the built product actually reflects "unified account journey," "action before consumption," "Tamil-first architecture," "transparent pricing/trainer info," etc.), FR-069–FR-070 (signup reliability, ≥95% payment success rate — cross-check against `002`/`009`'s own test suites rather than re-testing), FR-072–FR-076 (course resume without data loss owned by `004`, community flows owned by `005`, notification deep-links, payment-access-immediacy owned by `002`/`009`, mobile/web progress sync — T041 above), FR-094–FR-096 (data minimization policy, user data-rights controls — cross-reference `003`'s account-lifecycle feature which implements export/deletion/consent, flagging here only whether the minimum-data-collection principle FR-094 itself needs a policy decision per its `[NEEDS CLARIFICATION]` tag), and FR-101 (availability/scale target — flag as an open ops decision, `[NEEDS CLARIFICATION]` per spec.md). This task's output is a traceability table, not new code, and exists specifically because narrative/principle-level FRs don't map cleanly to a single implementation task.
+- [ ] T063 [P] Accessibility pass — **NOT DONE**. Deferred per user's explicit "fast-follow after core 001" decision this session; a full sweep across the entire web app (not just new UI) is a broad QA task, not new functionality.
+- [ ] T064 [P] Performance pass — **NOT DONE**, same deferral.
+- [ ] T065 [P] Cross-browser/responsive verification — **NOT DONE**, same deferral.
+- [x] T066 Non-production data-safety audit — already satisfied: `database/seeds/index.ts`'s `assertSafeToSeed()` (pre-existing) refuses to run against production-looking hosts; `.env` files are gitignored, `.env.test`/`.env.example` contain only placeholders — spot-checked, no committed secrets found.
+- [ ] T067 [P] Brand/design QA pass — **NOT DONE**, same Polish-phase deferral (this session's UI additions follow the existing brand tokens established in an earlier branding task, but a full audit wasn't performed).
+- [x] T068 Audit-trail coverage — verified: every new admin action (organization create/update, milestone verify/reject, moderation action/dismiss, appeal resolve, governance stage-advance) calls `recordAuditEvent()`; course-version snapshots are append-only (never overwritten).
+- [ ] T069 `quickstart.md` — does not exist (never generated for this feature) — nothing to run.
+- [x] T070 **[NEW]** NFR/principle audit — **DONE this session**: `backend/tests/integration/principle-governance-audit.integration.test.ts`, 10 real assertions passing + 5 honest `.todo` entries for genuinely unassertable/out-of-scope items (FR-003/007 localization, FR-070 payment rate with no live billing yet, FR-072–074 owned by 004/005, FR-094/FR-101 explicitly `[NEEDS CLARIFICATION]` per spec.md).
 
 ---
 

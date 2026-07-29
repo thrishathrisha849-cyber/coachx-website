@@ -46,3 +46,16 @@ export async function loginAccount(input: LoginInput): Promise<LoginResult> {
 export async function requestPasswordReset(email: string): Promise<void> {
   await apiClient.post('/auth/forgot-password', { email });
 }
+
+export interface Me {
+  id: string;
+  email: string;
+  roles: string[];
+  displayName: string | null;
+}
+
+/** 003: powers `auth.context.tsx`'s session restore (same `GET /me` the admin app already uses). */
+export async function getMe(): Promise<Me> {
+  const { data } = await apiClient.get<ApiSuccessResponse<Me>>('/me');
+  return data.data;
+}

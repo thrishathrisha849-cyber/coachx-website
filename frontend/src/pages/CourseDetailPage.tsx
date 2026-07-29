@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import { fetchCourseBySlug } from '@/api/lms.api';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { fetchCourseBySlug, getMyCourseAccess, enrollInCourse, type CourseAccessDecision } from '@/api/lms.api';
 import type { CourseWithModules } from '@/types/lms.types';
 import type { NormalizedApiError } from '@/api/client';
+import { useAuth } from '@/context/auth.context';
 import { useDocumentHead, useStructuredData } from '@/hooks/useDocumentHead';
 import { PageSkeleton } from '@/components/system/Skeleton';
 import { NotFound } from '@/components/system/NotFound';
@@ -11,29 +12,52 @@ import { formatCoursePrice } from '@/utils/money';
 import { sanitizeRichText } from '@/utils/sanitizeHtml';
 
 /**
- * Phase 6 Part 1 — public course detail (brief's "Public Frontend Scope").
- * Renders title/description/instructors/modules (syllabus) and SEO/
- * structured data. Deliberately does NOT render: an enrollment button,
- * checkout, progress, lesson player, reviews, or wishlist — all Part 2/3
- * (brief: "Do not implement enrollment button behavior"). The module list
- * is a read-only syllabus outline (title + preview flag only) — no lesson
- * content exists yet to link into.
+ * Phase 6 Part 1 — public course detail. Renders title/description/
+ * instructors/modules (syllabus) and SEO/structured data.
+ *
+ * 004 US1: the enroll CTA (deliberately absent when this page was first
+ * built, before Part 2's enrollment work existed) is added here — it calls
+ * the real `POST /lms/me/enrollments` and reflects the server's own access
+ * decision (`GET /lms/me/courses/:courseId/access`) rather than a
+ * client-guessed enrolled/not-enrolled state.
  */
 export function CourseDetailPage() {
   const { slug = '' } = useParams<{ slug: string }>();
+  const navigate = useNavigate();
+  const { isAuthenticated } = useAuth();
   const [course, setCourse] = useState<CourseWithModules | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'not-found'>('loading');
+  const [access, setAccess] = useState<CourseAccessDecision | null>(null);
+  const [enrollStatus, setEnrollStatus] = useState<'idle' | 'submitting' | 'error'>('idle');
+  const [enrollError, setEnrollError] = useState<string | null>(null);
 
   useEffect(() => {
     setStatus('loading');
     setCourse(null);
+    setAccess(null);
     fetchCourseBySlug(slug)
       .then((result) => {
         setCourse(result);
         setStatus('ready');
+        if (isAuthenticated) {
+          getMyCourseAccess(result.id).then(setAccess).catch(() => setAccess(null));
+        }
       })
       .catch((err: NormalizedApiError) => setStatus(err.status === 404 ? 'not-found' : 'not-found'));
-  }, [slug]);
+  }, [slug, isAuthenticated]);
+
+  const handleEnroll = async () => {
+    if (!course) return;
+    setEnrollStatus('submitting');
+    setEnrollError(null);
+    try {
+      await enrollInCourse(course.id);
+      navigate(`/learn/${course.id}`);
+    } catch (err) {
+      setEnrollStatus('error');
+      setEnrollError((err as NormalizedApiError).message ?? 'Could not enroll. Please try again.');
+    }
+  };
 
   useDocumentHead({
     title: course?.seo.title ?? 'Course | CoachX',
@@ -151,8 +175,37 @@ export function CourseDetailPage() {
             {formatCoursePrice(course.priceType, course.priceAmountMinor, course.currency)}
           </p>
 
-          {/* Enrollment is a Part 2 feature — deliberately not rendered as
-              a misleading disabled button here; see file header note. */}
+          <div className="mb-4">
+            {!isAuthenticated ? (
+              <Link
+                to="/login"
+                className="block w-full rounded-md bg-brand-600 px-4 py-2.5 text-center text-sm font-semibold text-white hover:bg-brand-700"
+              >
+                Log in to enroll
+              </Link>
+            ) : access?.allowed ? (
+              <Link
+                to={`/learn/${course.id}`}
+                className="block w-full rounded-md bg-brand-600 px-4 py-2.5 text-center text-sm font-semibold text-white hover:bg-brand-700"
+              >
+                Continue learning
+              </Link>
+            ) : access?.reason === 'ENROLLMENT_REQUIRED' ? (
+              <button
+                type="button"
+                onClick={handleEnroll}
+                disabled={enrollStatus === 'submitting'}
+                className="w-full rounded-md bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
+              >
+                {enrollStatus === 'submitting' ? 'Enrolling…' : 'Enroll now'}
+              </button>
+            ) : access ? (
+              <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
+                {access.message}
+              </p>
+            ) : null}
+            {enrollError && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{enrollError}</p>}
+          </div>
 
           <dl className="space-y-2 text-sm">
             <div className="flex justify-between">

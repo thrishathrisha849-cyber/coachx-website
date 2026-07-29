@@ -4,6 +4,7 @@ import { registerAccount } from '@/api/auth.api';
 import type { NormalizedApiError } from '@/api/client';
 import { useDocumentHead } from '@/hooks/useDocumentHead';
 import { env } from '@/config/env';
+import { CommunityRulesGate } from '@/components/community/CommunityRulesGate';
 
 interface FormState {
   name: string;
@@ -35,6 +36,7 @@ export function JoinPage() {
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [status, setStatus] = useState<'idle' | 'submitting' | 'success' | 'error'>('idle');
   const [serverError, setServerError] = useState<string | null>(null);
+  const [showRulesGate, setShowRulesGate] = useState(false);
 
   useDocumentHead({
     title: 'Join Now | CoachX',
@@ -45,19 +47,28 @@ export function JoinPage() {
     const errors: Partial<Record<keyof FormState, string>> = {};
     if (form.name.trim().length < 2) errors.name = 'Please enter your full name.';
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) errors.email = 'Enter a valid email address.';
-    if (form.password.length < 8) errors.password = 'Password must be at least 8 characters.';
+    if (form.password.length < 8 || !/[a-zA-Z]/.test(form.password) || !/[0-9]/.test(form.password)) {
+      errors.password = 'Password must be at least 8 characters and include a letter and a number.';
+    }
     if (form.confirmPassword !== form.password) errors.confirmPassword = 'Passwords do not match.';
     if (!form.acceptedTerms) errors.acceptedTerms = 'Please accept the terms to create an account.';
     setFieldErrors(errors);
     return Object.keys(errors).length === 0;
   }
 
-  const handleSubmit = async (e: FormEvent) => {
+  const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (status === 'submitting') return;
-
     if (!validate()) return;
 
+    // 001 FR-093: community rules MUST be shown before the account is
+    // finalized — the actual registerAccount() call happens only after
+    // the gate's onAccept, never on this submit directly.
+    setShowRulesGate(true);
+  };
+
+  const completeRegistration = async () => {
+    setShowRulesGate(false);
     setStatus('submitting');
     setServerError(null);
 
@@ -73,7 +84,15 @@ export function JoinPage() {
       setForm(initialState);
     } catch (err) {
       setStatus('error');
-      setServerError((err as NormalizedApiError).message ?? 'Something went wrong. Please try again.');
+      const apiError = err as NormalizedApiError;
+      const policyErrors = Array.isArray((apiError.details as { errors?: string[] } | undefined)?.errors)
+        ? (apiError.details as { errors: string[] }).errors
+        : undefined;
+      setServerError(
+        policyErrors?.length
+          ? policyErrors.join(' ')
+          : apiError.message ?? 'Something went wrong. Please try again.',
+      );
     }
   };
 
@@ -88,6 +107,10 @@ export function JoinPage() {
       {status === 'success' ? (
         <div className="mt-6 rounded-lg border border-green-200 bg-green-50 p-6 text-green-800 dark:border-green-900 dark:bg-green-950 dark:text-green-300">
           Account created — check your email to verify your address before signing in.
+        </div>
+      ) : showRulesGate ? (
+        <div className="mt-6">
+          <CommunityRulesGate onAccept={completeRegistration} onCancel={() => setShowRulesGate(false)} />
         </div>
       ) : (
         <form onSubmit={handleSubmit} noValidate className="mt-6 flex flex-col gap-4">

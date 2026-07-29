@@ -259,8 +259,347 @@ model User {
   /// Phase 6 Part 2 — a learner's course access grants (004 FR-021–033).
   enrollments           Enrollment[]
 
+  /// 001 FR-086: Organization Admin's own-organization scope. Nullable —
+  /// most users belong to no organization; set only for Organization-tier
+  /// members and their Organization Admin.
+  organizationId String?       @map("organization_id") @db.Uuid
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  /// 001 FR-039–FR-046 — lifecycle stage tracker, one row per user, only
+  /// from REGISTERED_USER onward (Visitor/Lead precede User existence —
+  /// owned by future CRM/marketing features per spec.md Assumptions).
+  lifecycleState UserLifecycleState?
+  milestones     BusinessMilestone[]
+  lifecycleEvents LifecycleEvent[]
+
+  /// 001 FR-090–FR-093 — Trust & Safety: cases this user filed as a
+  /// reporter, and cases filed against this user as the moderation subject.
+  reportedCases          TrustSafetyCase[] @relation("ReportedCases")
+  moderationSubjectCases TrustSafetyCase[] @relation("ModerationSubjectCases")
+
+  /// 003 US2 — the 13-step onboarding sequence and its generated Roadmap.
+  onboardingSteps OnboardingStepResponse[]
+  roadmap         Roadmap?
+
   @@index([status])
+  @@index([organizationId])
   @@map("users")
+}
+
+// ----------------------------------------------------------------------------
+// Organization — 001 FR-053/FR-086: the Organization membership tier and
+// Organization Admin role's own-org-only data scope. Deliberately minimal
+// (name/slug/status only) — this schema's own header note flagged
+// Organization as "considered and rejected as premature" prior to this
+// feature; 001 is the feature that actually needs it (Organization Admin
+// role + Organization membership tier both require a real entity to scope
+// against, not just a permission name with nothing behind it).
+// ----------------------------------------------------------------------------
+model Organization {
+  id String @id @default(uuid()) @db.Uuid
+
+  name String @db.VarChar(200)
+  slug String @unique @db.VarChar(220)
+
+  status OrganizationStatus @default(ACTIVE)
+
+  createdBy String?  @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  members User[]
+
+  @@map("organizations")
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+
+  @@map("organization_status")
+}
+
+// ----------------------------------------------------------------------------
+// UserLifecycleState — 001 FR-017 (onboarding capture) + FR-039–FR-046
+// (8-stage lifecycle; VISITOR/LEAD precede account creation and are
+// out of this feature's scope per spec.md Assumptions — owned by a future
+// CRM/marketing feature). One row per User, created at registration.
+// ----------------------------------------------------------------------------
+model UserLifecycleState {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @unique @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  stage UserLifecycleStage @default(REGISTERED_USER)
+
+  languageSelected String?  @map("language_selected") @db.VarChar(10)
+  goalSelected     String?  @map("goal_selected") @db.VarChar(120)
+  experienceLevel  String?  @map("experience_level") @db.VarChar(60)
+  skillSelected    String?  @map("skill_selected") @db.VarChar(120)
+  businessStage    String?  @map("business_stage") @db.VarChar(60)
+  timeAvailability String?  @map("time_availability") @db.VarChar(60)
+  interests        String[]
+  nicheSelected    String?  @map("niche_selected") @db.VarChar(120)
+
+  onboardingCompletedAt DateTime? @map("onboarding_completed_at") @db.Timestamptz(6)
+
+  /// FR-042 Activated Member joint criteria + FR-014 Next-Best-Action
+  /// chain. Populated by the owning feature as each milestone occurs
+  /// (LMS for the lesson/path timestamps; future Community/AI-workspace
+  /// features for the rest — see docs referenced in lifecycle module).
+  firstLearningPathStartedAt DateTime? @map("first_learning_path_started_at") @db.Timestamptz(6)
+  firstLessonCompletedAt     DateTime? @map("first_lesson_completed_at") @db.Timestamptz(6)
+  firstCommunityActionAt     DateTime? @map("first_community_action_at") @db.Timestamptz(6)
+  firstOfferCreatedAt        DateTime? @map("first_offer_created_at") @db.Timestamptz(6)
+  firstPurchaseAt            DateTime? @map("first_purchase_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([stage])
+  @@map("user_lifecycle_states")
+}
+
+enum UserLifecycleStage {
+  REGISTERED_USER
+  ACTIVATED_MEMBER
+  ENGAGED_MEMBER
+  PAYING_MEMBER
+  ACHIEVER
+  ADVOCATE
+
+  @@map("user_lifecycle_stage")
+}
+
+// ----------------------------------------------------------------------------
+// BusinessMilestone — 001 FR-045, Constitution Article VIII: Achiever-stage
+// milestones MUST be verified, never auto-marked from a self-reported claim.
+// ----------------------------------------------------------------------------
+model BusinessMilestone {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type   BusinessMilestoneType
+  status MilestoneStatus @default(CLAIMED)
+
+  claimedAt      DateTime  @default(now()) @map("claimed_at") @db.Timestamptz(6)
+  verifiedAt     DateTime? @map("verified_at") @db.Timestamptz(6)
+  verifiedBy     String?   @map("verified_by") @db.Uuid
+  rejectedReason String?   @map("rejected_reason") @db.Text
+
+  evidence Json?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([userId, type])
+  @@index([status])
+  @@map("business_milestones")
+}
+
+enum BusinessMilestoneType {
+  FIRST_CLIENT
+  FIRST_1000
+  FIRST_10000
+  FIRST_1_LAKH
+  FIRST_COURSE_LAUNCH
+  FIRST_100_COMMUNITY_MEMBERS
+
+  @@map("business_milestone_type")
+}
+
+enum MilestoneStatus {
+  CLAIMED
+  VERIFIED
+  REJECTED
+
+  @@map("milestone_status")
+}
+
+// ----------------------------------------------------------------------------
+// LifecycleEvent — 001 FR-043 (Engaged Member weekly-recurring signals)
+// and FR-046 (Advocate-stage contributions). An append-only ledger, not a
+// mutable counter — lesson-completion signals are read directly from the
+// existing LMS LessonProgress table rather than duplicated here.
+// ----------------------------------------------------------------------------
+model LifecycleEvent {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type       LifecycleEventType
+  metadata   Json?
+  occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+
+  @@index([userId, type, occurredAt])
+  @@map("lifecycle_events")
+}
+
+enum LifecycleEventType {
+  POST_INTERACTION
+  EVENT_ATTENDANCE
+  CHALLENGE_SUBMISSION
+  REFERRAL
+  TESTIMONIAL_SUBMISSION
+  CASE_STUDY_SUBMISSION
+  MENTOR_APPLICATION
+  COMMUNITY_LEADERSHIP
+
+  @@map("lifecycle_event_type")
+}
+
+// ----------------------------------------------------------------------------
+// TrustSafetyCase / Appeal — 001 FR-090–FR-093: report/block/mute enter a
+// moderation queue with evidence retention, escalation to a moderation
+// action, and an appeal path. `targetId` is a loose string reference (not
+// an FK) since the target may be a post/comment/profile from a future
+// Community feature (005) that doesn't exist as a table yet — same
+// "loose reference by design" pattern already used by `Product.sellerId`.
+// ----------------------------------------------------------------------------
+model TrustSafetyCase {
+  id String @id @default(uuid()) @db.Uuid
+
+  type       TrustSafetyCaseType
+  targetType TrustSafetyTargetType @map("target_type")
+  targetId   String?                @map("target_id") @db.VarChar(120)
+
+  reporterId String? @map("reporter_id") @db.Uuid
+  reporter   User?   @relation("ReportedCases", fields: [reporterId], references: [id], onDelete: SetNull)
+
+  reportedUserId String? @map("reported_user_id") @db.Uuid
+  reportedUser   User?   @relation("ModerationSubjectCases", fields: [reportedUserId], references: [id], onDelete: SetNull)
+
+  reason   String @db.Text
+  evidence Json?
+
+  status TrustSafetyCaseStatus @default(OPEN)
+
+  actionType   ModerationActionType? @map("action_type")
+  actionReason String?               @map("action_reason") @db.Text
+  actionedBy   String?               @map("actioned_by") @db.Uuid
+  actionedAt   DateTime?             @map("actioned_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  appeals Appeal[]
+
+  @@index([status])
+  @@index([reportedUserId])
+  @@map("trust_safety_cases")
+}
+
+enum TrustSafetyCaseType {
+  REPORT
+  BLOCK
+  MUTE
+
+  @@map("trust_safety_case_type")
+}
+
+enum TrustSafetyTargetType {
+  POST
+  COMMENT
+  PROFILE
+  USER
+
+  @@map("trust_safety_target_type")
+}
+
+enum TrustSafetyCaseStatus {
+  OPEN
+  UNDER_REVIEW
+  ACTION_TAKEN
+  DISMISSED
+
+  @@map("trust_safety_case_status")
+}
+
+enum ModerationActionType {
+  WARNING
+  TEMPORARY_SUSPENSION
+  PERMANENT_BAN
+
+  @@map("moderation_action_type")
+}
+
+model Appeal {
+  id     String          @id @default(uuid()) @db.Uuid
+  caseId String          @map("case_id") @db.Uuid
+  case   TrustSafetyCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  submittedBy String @map("submitted_by") @db.Uuid
+  statement   String @db.Text
+
+  status AppealStatus @default(PENDING)
+
+  resolvedBy     String?   @map("resolved_by") @db.Uuid
+  resolvedAt     DateTime? @map("resolved_at") @db.Timestamptz(6)
+  resolutionNote String?   @map("resolution_note") @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([status])
+  @@map("appeals")
+}
+
+enum AppealStatus {
+  PENDING
+  UPHELD
+  OVERTURNED
+
+  @@map("appeal_status")
+}
+
+// ----------------------------------------------------------------------------
+// GovernanceRecord — 001 FR-083: every major feature release passes through
+// a fixed 10-stage governance sequence before reaching users.
+// ----------------------------------------------------------------------------
+model GovernanceRecord {
+  id String @id @default(uuid()) @db.Uuid
+
+  featureName String       @map("feature_name") @db.VarChar(200)
+  phase       ProductPhase
+
+  currentStage GovernanceStage @default(REQUIREMENT_APPROVAL) @map("current_stage")
+  stageHistory Json            @default("[]") @map("stage_history")
+
+  monitoringStartedAt DateTime? @map("monitoring_started_at") @db.Timestamptz(6)
+  postReleaseReviewAt DateTime? @map("post_release_review_at") @db.Timestamptz(6)
+
+  createdBy String?  @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([phase, currentStage])
+  @@map("governance_records")
+}
+
+enum ProductPhase {
+  FOUNDATION_MVP
+  GROWTH_PLATFORM
+  BUSINESS_OPERATING_SYSTEM
+  ENTERPRISE_ECOSYSTEM
+
+  @@map("product_phase")
+}
+
+enum GovernanceStage {
+  REQUIREMENT_APPROVAL
+  UX_REVIEW
+  TECHNICAL_REVIEW
+  SECURITY_REVIEW
+  DEVELOPMENT
+  QA
+  UAT
+  RELEASE_APPROVAL
+  MONITORING
+  POST_RELEASE_REVIEW
+
+  @@map("governance_stage")
 }
 
 enum AccountStatus {
@@ -657,6 +996,8 @@ model Page {
 
   blocks   PageBlock[]
   versions PageVersion[]
+  /// 002 US3 — set only for a masterclass/webinar landing page.
+  masterclassConfig MasterclassConfig?
 
   @@unique([slug, language])
   @@index([status, publishAt])
@@ -679,6 +1020,10 @@ enum PageStatus {
   APPROVED
   SCHEDULED
   PUBLISHED
+  /// 001 FR-097: distinct from ARCHIVED — a page taken down but not
+  /// permanently retired (e.g. temporarily pulled, can be republished
+  /// directly without re-entering the draft/review workflow).
+  UNPUBLISHED
   ARCHIVED
 
   @@map("page_status")
@@ -1136,6 +1481,12 @@ model Course {
   /// exists so Part 1's course-builder metadata is complete without
   /// building any certificate mechanics.
   certificateAvailable Boolean @default(false) @map("certificate_available")
+  /// 004 US5 (Certificate System batch) — FR-084 "course mapping": which
+  /// template a generated certificate for THIS course uses. Null = no
+  /// template configured yet (certificate generation is still allowed —
+  /// see certificate.service.ts — just rendered without template styling).
+  certificateTemplateId String?              @map("certificate_template_id") @db.Uuid
+  certificateTemplate   CertificateTemplate? @relation(fields: [certificateTemplateId], references: [id], onDelete: SetNull)
 
   priceType        CoursePriceType @default(FREE) @map("price_type")
   /// Money-safe integer minor-unit storage (e.g. paise for INR) — NEVER a
@@ -1208,12 +1559,41 @@ model Course {
   instructors CourseInstructor[]
   /// Phase 6 Part 2 (004 FR-021–033).
   enrollments Enrollment[]
+  /// 001 FR-099, Constitution Article IV — closes the gap the schema's own
+  /// `version` counter comment flagged ("optimistic-concurrency guard...
+  /// not yet enforced"): a non-destructive snapshot is now taken whenever
+  /// previously-published course content is edited (see course-version.service.ts).
+  versions    CourseVersion[]
+  /// 004 US5 (Certificate System batch).
+  certificates Certificate[]
 
   @@index([status])
   @@index([categoryId])
   @@index([status, publishAt])
   @@index([isFeatured])
   @@map("courses")
+}
+
+// ----------------------------------------------------------------------------
+// CourseVersion — 001 FR-099: "when published course content is changed,
+// the system MUST preserve the previous version in an audit log rather
+// than overwriting it destructively." Mirrors PageVersion's snapshot
+// pattern (full JSON snapshot per edit, append-only, never overwritten).
+// ----------------------------------------------------------------------------
+model CourseVersion {
+  id       String @id @default(uuid()) @db.Uuid
+  courseId String @map("course_id") @db.Uuid
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  versionNumber Int  @map("version_number")
+  snapshot      Json
+
+  createdBy String?  @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([courseId, versionNumber])
+  @@index([courseId])
+  @@map("course_versions")
 }
 
 /// FR-015's 12 editorial statuses reconciled with FR-100's 6-state review
@@ -1518,6 +1898,12 @@ model Lesson {
 
   activities LearningActivity[]
   progress   LessonProgress[]
+  /// 004 US3 — a lesson MAY have exactly one attached Quiz (mirrors FR-017
+  /// listing "Quiz"/"Assessment" as lesson types); a lesson with no Quiz
+  /// row is a plain content lesson, same as before this addition.
+  quiz       Quiz?
+  /// 004 US4 (Assignment System batch) — same 1:1 pattern as `quiz` above.
+  assignment Assignment?
 
   @@unique([moduleId, slug])
   @@unique([moduleId, position])
@@ -1530,6 +1916,13 @@ enum LessonCompletionRuleType {
   MINIMUM_WATCH_PERCENT
   ALL_ACTIVITIES_VIEWED
   INSTRUCTOR_APPROVAL
+  /// 004 US3 (Quiz System batch) — satisfied once the enrollment has a
+  /// GRADED, passed `QuizAttempt` for this lesson's attached `Quiz`. See
+  /// `completion.service.ts`'s `evaluateAutomaticRules`.
+  QUIZ_PASS
+  /// 004 US4 (Assignment System batch) — satisfied once the enrollment has
+  /// an APPROVED `Submission` for this lesson's attached `Assignment`.
+  ASSIGNMENT_APPROVED
 
   @@map("lesson_completion_rule_type")
 }
@@ -1640,6 +2033,528 @@ model ActivityProgress {
   @@map("activity_progress")
 }
 
+// =============================================================================
+// 004 US3 — Quiz System (this implementation batch). Deliberately simpler
+// than spec.md's fullest FR-064 vision: Questions belong directly to ONE
+// Quiz (a per-quiz question list), not a separate, cross-quiz-reusable
+// "Question Bank" with tagging/randomized-set-generation-by-category —
+// that reusable-bank richness is a real, separate future enhancement, not
+// silently dropped; this batch ships a genuinely functional, server-graded
+// quiz engine end-to-end first. A Quiz attaches 1:1 to a Lesson (FR-017's
+// "Quiz" lesson type), not to a LearningActivity (LearningActivity is
+// deliberately metadata-only content per Part 2A; a quiz's richer
+// attempt/scoring structure does not fit that shape, the same reasoning
+// that keeps Assignment/Certificate as their own future entities too).
+// =============================================================================
+
+model Quiz {
+  id       String @id @default(uuid()) @db.Uuid
+  lessonId String @unique @map("lesson_id") @db.Uuid
+  lesson   Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  title        String  @db.VarChar(200)
+  instructions String? @db.Text
+
+  quizType QuizType @default(GRADED) @map("quiz_type")
+
+  passingScorePercent Int      @default(70) @map("passing_score_percent")
+  /// null = unlimited attempts.
+  maxAttempts         Int?     @map("max_attempts")
+  /// null = untimed.
+  timeLimitMinutes    Int?     @map("time_limit_minutes")
+  randomizeQuestions  Boolean  @default(false) @map("randomize_questions")
+  randomizeAnswers    Boolean  @default(false) @map("randomize_answers")
+  /// FR-067 "answer-review visibility controlled by an admin setting" —
+  /// whether a learner sees which answers were correct after submitting.
+  showCorrectAnswers  Boolean  @default(true) @map("show_correct_answers")
+
+  status QuizStatus @default(DRAFT)
+
+  version   Int     @default(1)
+  createdBy String? @map("created_by") @db.Uuid
+  updatedBy String? @map("updated_by") @db.Uuid
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  /// Soft delete only — an archived/deleted Quiz must never orphan
+  /// historical QuizAttempt/QuizAnswer rows.
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  questions Question[]
+  attempts  QuizAttempt[]
+
+  @@map("quizzes")
+}
+
+enum QuizType {
+  PRACTICE
+  GRADED
+  MODULE_QUIZ
+  FINAL_ASSESSMENT
+  CERTIFICATION_EXAM
+  DIAGNOSTIC
+
+  @@map("quiz_type")
+}
+
+enum QuizStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+
+  @@map("quiz_status")
+}
+
+/// FR-062 question types, narrowed to the subset implementable without a
+/// file-upload pipeline or a human-graded-response workflow this pass —
+/// Match/Ordering/File-upload/Scenario/Audio/Video-response are explicitly
+/// future-ready (same "don't preclude, don't fake" pattern used elsewhere
+/// in this codebase), not silently aliased to one of these.
+enum QuestionType {
+  SINGLE_CHOICE
+  MULTIPLE_CHOICE
+  TRUE_FALSE
+  FILL_BLANK
+  SHORT_ANSWER
+  NUMERIC
+
+  @@map("question_type")
+}
+
+enum QuestionStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+
+  @@map("question_status")
+}
+
+model Question {
+  id     String @id @default(uuid()) @db.Uuid
+  quizId String @map("quiz_id") @db.Uuid
+  quiz   Quiz   @relation(fields: [quizId], references: [id], onDelete: Cascade)
+
+  type QuestionType
+
+  prompt      String  @db.Text
+  /// Shown to the learner after submission, only if `quiz.showCorrectAnswers`.
+  explanation String? @db.Text
+  points      Int     @default(1)
+  /// Ordering within the quiz — unique per (quizId, position).
+  position    Int
+
+  /// Type-dependent correct-answer data for NON-choice types only:
+  ///  - SHORT_ANSWER/FILL_BLANK: `{ "acceptedAnswers": string[] }` — the
+  ///    learner's trimmed, case-insensitive answer must match one entry.
+  ///  - NUMERIC: `{ "correctValue": number, "tolerance": number }`.
+  /// Choice types (SINGLE_CHOICE/MULTIPLE_CHOICE/TRUE_FALSE) use
+  /// `QuestionOption.isCorrect` instead — never duplicated here.
+  answerKey Json? @map("answer_key")
+
+  status QuestionStatus @default(PUBLISHED)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  /// Soft delete only (FR-066 edge case: "a question is deleted from the
+  /// question bank after a learner already attempted the quiz containing
+  /// it" — the historical `QuizAnswer` must remain valid/interpretable).
+  /// An admin "delete" sets this and excludes the question from future
+  /// quiz-taking; it is never physically removed.
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  options QuestionOption[]
+  answers QuizAnswer[]
+
+  @@unique([quizId, position])
+  @@map("questions")
+}
+
+model QuestionOption {
+  id         String   @id @default(uuid()) @db.Uuid
+  questionId String   @map("question_id") @db.Uuid
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  text      String  @db.Text
+  isCorrect Boolean @default(false) @map("is_correct")
+  /// Ordering within the question — unique per (questionId, position).
+  position  Int
+
+  @@unique([questionId, position])
+  @@map("question_options")
+}
+
+model QuizAttempt {
+  id           String     @id @default(uuid()) @db.Uuid
+  quizId       String     @map("quiz_id") @db.Uuid
+  quiz         Quiz       @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  enrollmentId String     @map("enrollment_id") @db.Uuid
+  enrollment   Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+
+  /// 1-based, per (enrollmentId, quizId) — FR-063 "attempts allowed".
+  attemptNumber Int @map("attempt_number")
+
+  status QuizAttemptStatus @default(IN_PROGRESS)
+
+  startedAt   DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  /// Computed from `quiz.timeLimitMinutes` at start time — null if untimed.
+  expiresAt   DateTime? @map("expires_at") @db.Timestamptz(6)
+  submittedAt DateTime? @map("submitted_at") @db.Timestamptz(6)
+  gradedAt    DateTime? @map("graded_at") @db.Timestamptz(6)
+
+  pointsPossible Int?     @map("points_possible")
+  pointsEarned   Int?     @map("points_earned")
+  scorePercent   Int?     @map("score_percent")
+  passed         Boolean?
+
+  answers QuizAnswer[]
+
+  /// A learner may have at most one attempt row per (enrollment, quiz,
+  /// attemptNumber) — attempt numbers are assigned sequentially server-side,
+  /// never client-supplied.
+  @@unique([enrollmentId, quizId, attemptNumber])
+  @@index([quizId])
+  @@map("quiz_attempts")
+}
+
+enum QuizAttemptStatus {
+  IN_PROGRESS
+  SUBMITTED
+  GRADED
+  EXPIRED
+
+  @@map("quiz_attempt_status")
+}
+
+model QuizAnswer {
+  id         String      @id @default(uuid()) @db.Uuid
+  attemptId  String      @map("attempt_id") @db.Uuid
+  attempt    QuizAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  questionId String      @map("question_id") @db.Uuid
+  /// Restrict, not Cascade — a Question is always soft-deleted (see
+  /// `Question.deletedAt`), never physically removed, so this FK should
+  /// never actually block a delete; it is a defensive backstop, not the
+  /// primary mechanism that keeps historical answers interpretable.
+  question   Question    @relation(fields: [questionId], references: [id], onDelete: Restrict)
+
+  /// Choice types — the learner's selected `QuestionOption` id(s).
+  selectedOptionIds String[] @map("selected_option_ids")
+  /// SHORT_ANSWER/FILL_BLANK free text, or NUMERIC's entered value
+  /// (stored as text; parsed back to a number at grading time).
+  answerText        String?  @map("answer_text")
+
+  /// Null until graded (FR-066 "server calculates or queues grading").
+  isCorrect     Boolean? @map("is_correct")
+  pointsAwarded Int?     @map("points_awarded")
+
+  answeredAt DateTime @default(now()) @map("answered_at") @db.Timestamptz(6)
+
+  @@unique([attemptId, questionId])
+  @@map("quiz_answers")
+}
+
+// =============================================================================
+// 004 US4 — Assignment System (this implementation batch). Same "attaches
+// 1:1 to a Lesson" pattern as Quiz — an Assignment is content belonging to
+// a lesson, not a LearningActivity (richer submission/rubric/review
+// structure doesn't fit that metadata-only shape). Rubric criteria belong
+// directly to ONE assignment (no separate, cross-assignment-reusable
+// Rubric template entity) — the same "ship a genuinely functional engine
+// first, defer the reusable-template richness" scope reduction Quiz's
+// per-quiz Question list already established for this codebase. File-
+// shaped submission formats (file/image/audio/video) are link-based (the
+// learner supplies a URL to already-hosted content) since no upload/
+// storage/virus-scanning pipeline exists anywhere in this codebase
+// (docs/lms/DECISION_GATES.md gate #31) — never a fake upload widget.
+// =============================================================================
+
+model Assignment {
+  id       String @id @default(uuid()) @db.Uuid
+  lessonId String @unique @map("lesson_id") @db.Uuid
+  lesson   Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  title           String  @db.VarChar(200)
+  instructions    String? @db.Text
+  learningOutcome String? @map("learning_outcome") @db.VarChar(500)
+
+  submissionFormat AssignmentSubmissionFormat @default(TEXT) @map("submission_format")
+  /// Advisory only (shown to the learner alongside instructions) — there is
+  /// no server-side file-type/MIME enforcement to apply it to, since
+  /// submissions are link-based, not uploaded (see file header note).
+  allowedFileTypes String[] @map("allowed_file_types")
+
+  dueAt        DateTime? @map("due_at") @db.Timestamptz(6)
+  maxScore     Int      @default(100) @map("max_score")
+  passingScore Int      @default(70) @map("passing_score")
+  latePolicy   AssignmentLatePolicy @default(ACCEPT) @map("late_policy")
+  /// null = unlimited resubmissions after CHANGES_REQUESTED.
+  maxAttempts  Int?     @map("max_attempts")
+
+  status AssignmentLifecycleStatus @default(DRAFT)
+
+  version   Int     @default(1)
+  createdBy String? @map("created_by") @db.Uuid
+  updatedBy String? @map("updated_by") @db.Uuid
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  rubricCriteria RubricCriterion[]
+  submissions    Submission[]
+
+  @@map("assignments")
+}
+
+enum AssignmentSubmissionFormat {
+  TEXT
+  LINK
+  FILE_URL
+  IMAGE_URL
+  AUDIO_URL
+  VIDEO_URL
+
+  @@map("assignment_submission_format")
+}
+
+enum AssignmentLatePolicy {
+  REJECT
+  ACCEPT
+
+  @@map("assignment_late_policy")
+}
+
+enum AssignmentLifecycleStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+
+  @@map("assignment_lifecycle_status")
+}
+
+model RubricCriterion {
+  id           String     @id @default(uuid()) @db.Uuid
+  assignmentId String     @map("assignment_id") @db.Uuid
+  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  title       String  @db.VarChar(200)
+  description String? @db.Text
+  maxPoints   Int     @default(10) @map("max_points")
+  /// Ordering within the assignment — unique per (assignmentId, position).
+  position    Int
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  /// Soft delete only — a criterion already scored on a historical
+  /// submission must remain interpretable (same FR-066-style guarantee
+  /// Quiz's `Question.deletedAt` provides).
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  scores SubmissionCriterionScore[]
+
+  @@unique([assignmentId, position])
+  @@map("rubric_criteria")
+}
+
+/// FR-072 status lifecycle. "Not started" has no row at all (no Submission
+/// exists yet); "Overdue" is a derived/computed display state (dueAt has
+/// passed on a still-DRAFT submission), not stored here.
+model Submission {
+  id           String     @id @default(uuid()) @db.Uuid
+  assignmentId String     @map("assignment_id") @db.Uuid
+  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  enrollmentId String     @map("enrollment_id") @db.Uuid
+  enrollment   Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+
+  /// 1-based — a resubmission after CHANGES_REQUESTED creates a NEW row
+  /// (this incremented), never overwrites the prior one, so "the previous
+  /// submission remains visible alongside the new one" (FR-072 acceptance
+  /// scenario 2) is true by construction, not by a separate history table.
+  attemptNumber Int @map("attempt_number")
+
+  status SubmissionStatus @default(DRAFT)
+
+  textBody String? @map("text_body") @db.Text
+  /// LINK/FILE_URL/IMAGE_URL/AUDIO_URL/VIDEO_URL — see file header note.
+  linkUrl  String? @map("link_url") @db.VarChar(500)
+
+  submittedAt DateTime? @map("submitted_at") @db.Timestamptz(6)
+  /// Set at submit time by comparing `submittedAt` against the
+  /// assignment's `dueAt` — never client-asserted.
+  isLate      Boolean   @default(false) @map("is_late")
+
+  score  Int?
+  passed Boolean?
+
+  reviewerId String?   @map("reviewer_id") @db.Uuid
+  reviewedAt DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  /// Private — instructor/admin-only, never returned to the learner.
+  reviewerNote    String? @map("reviewer_note") @db.Text
+  /// Learner-facing feedback — distinct field from `reviewerNote` above,
+  /// so a private note can never leak into what the learner sees.
+  learnerFeedback String? @map("learner_feedback") @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  criterionScores SubmissionCriterionScore[]
+
+  @@unique([enrollmentId, assignmentId, attemptNumber])
+  @@index([assignmentId, status])
+  @@map("submissions")
+}
+
+enum SubmissionStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  CHANGES_REQUESTED
+  APPROVED
+  REJECTED
+  EXCUSED
+
+  @@map("submission_status")
+}
+
+model SubmissionCriterionScore {
+  id           String          @id @default(uuid()) @db.Uuid
+  submissionId String          @map("submission_id") @db.Uuid
+  submission   Submission      @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  criterionId  String          @map("criterion_id") @db.Uuid
+  /// Restrict, not Cascade — `RubricCriterion` is always soft-deleted (see
+  /// its own `deletedAt`), never physically removed, so this FK should
+  /// never actually block a delete; a defensive backstop, not the primary
+  /// mechanism (same reasoning as `QuizAnswer.question`'s FK).
+  criterion    RubricCriterion @relation(fields: [criterionId], references: [id], onDelete: Restrict)
+
+  pointsAwarded Int     @map("points_awarded")
+  comment       String? @db.Text
+
+  @@unique([submissionId, criterionId])
+  @@map("submission_criterion_scores")
+}
+
+// =============================================================================
+// 004 US5 — Certificate System (this implementation batch). Only
+// COURSE_COMPLETION is actually issuable — LearningPath/Program/Event/
+// Challenge/Organization-training entities don't exist in this codebase
+// yet (same "type system stays truthful even though only a subset is
+// fulfilled" pattern already used for `EnrollmentSource`). "Generate a
+// PDF" (FR-083) is a server-rendered, browser-printable HTML certificate
+// view, NOT a binary PDF file — no PDF-generation library or file/object
+// storage pipeline exists anywhere in this codebase (docs/lms/
+// DECISION_GATES.md gate #31), so `Certificate` has no `pdfUrl` file
+// reference; the public verification page IS the "PDF" deliverable, and
+// is real, functional, and matches FR-085's actual requirement (a public,
+// unauthenticated, credential-ID-driven verification view).
+// =============================================================================
+
+model CertificateTemplate {
+  id   String @id @default(uuid()) @db.Uuid
+  name String @db.VarChar(200)
+
+  /// FR-084 template fields — image/color/font references only (no
+  /// upload pipeline; these are plain URLs the admin supplies, same
+  /// external-URL pattern `LearningActivity.mediaUrl` already uses).
+  backgroundUrl String? @map("background_url") @db.VarChar(500)
+  logoUrl       String? @map("logo_url") @db.VarChar(500)
+  signatureUrl  String? @map("signature_url") @db.VarChar(500)
+  sealUrl       String? @map("seal_url") @db.VarChar(500)
+  fontFamily    String? @map("font_family") @db.VarChar(100)
+  primaryColor  String? @map("primary_color") @db.VarChar(20)
+  language      String  @default("EN") @db.VarChar(10)
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdBy String? @map("created_by") @db.Uuid
+  updatedBy String? @map("updated_by") @db.Uuid
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  courses      Course[]
+  certificates Certificate[]
+
+  @@map("certificate_templates")
+}
+
+model Certificate {
+  id           String     @id @default(uuid()) @db.Uuid
+  courseId     String     @map("course_id") @db.Uuid
+  course       Course     @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  enrollmentId String     @unique @map("enrollment_id") @db.Uuid
+  enrollment   Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+
+  /// FR-082 "unique verification code" — public-facing, short, distinct
+  /// from the internal UUID `id` (never expose the raw DB id as the
+  /// credential a learner shares — same "opaque public identifier"
+  /// discipline as `Enrollment`'s own internal-vs-public id split
+  /// elsewhere in this schema).
+  credentialId String @unique @map("credential_id") @db.VarChar(40)
+
+  certificateType CertificateType @default(COURSE_COMPLETION) @map("certificate_type")
+
+  /// FR-082/FR-086 Historical Immutability (Constitution Article IV) —
+  /// learner/course/instructor/organization names are SNAPSHOTTED at
+  /// issuance time, never a live join. A later profile-name change or
+  /// course-title edit must never retroactively alter an already-issued
+  /// certificate.
+  learnerName      String  @map("learner_name") @db.VarChar(200)
+  courseTitle      String  @map("course_title") @db.VarChar(200)
+  instructorName   String? @map("instructor_name") @db.VarChar(200)
+  organizationName String? @map("organization_name") @db.VarChar(200)
+
+  completionDate DateTime  @map("completion_date") @db.Timestamptz(6)
+  issuedAt       DateTime  @default(now()) @map("issued_at") @db.Timestamptz(6)
+  expiresAt      DateTime? @map("expires_at") @db.Timestamptz(6)
+
+  status CertificateStatus @default(VALID)
+
+  revokedAt     DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revokedBy     String?   @map("revoked_by") @db.Uuid
+  revokedReason String?   @map("revoked_reason") @db.Text
+
+  templateId String?              @map("template_id") @db.Uuid
+  template   CertificateTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  /// SC-002 "100% of certificates issued have a system-recorded, server-
+  /// evaluated eligibility snapshot showing every configured eligibility
+  /// condition was met at issuance time." See `certificate.service.ts`'s
+  /// `evaluateCertificateEligibility` for exactly which FR-081 conditions
+  /// this codebase can actually verify vs. honestly reports as not
+  /// applicable (no owning system exists yet).
+  eligibilitySnapshot Json @map("eligibility_snapshot")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([courseId])
+  @@map("certificates")
+}
+
+enum CertificateType {
+  COURSE_COMPLETION
+  LEARNING_PATH
+  PROGRAM_COMPLETION
+  SKILL_CERTIFICATION
+  EVENT_PARTICIPATION
+  CHALLENGE_COMPLETION
+  ORGANIZATION_TRAINING
+
+  @@map("certificate_type")
+}
+
+/// "Not found" (FR-085) is not a stored status — it is what the public
+/// verification endpoint returns when no Certificate matches the
+/// requested credential ID at all.
+enum CertificateStatus {
+  VALID
+  EXPIRED
+  REVOKED
+  REPLACED
+
+  @@map("certificate_status")
+}
+
 /// FR-021 access-grant SOURCE taxonomy, modeled exactly as FR-021 lists it
 /// (so the type system stays truthful even though Part 2 can only actually
 /// FULFILL a subset of these — see entitlement.service.ts). MEMBERSHIP,
@@ -1736,6 +2651,11 @@ model Enrollment {
   lessonProgress      LessonProgress[]
   completionOverrides CompletionOverride[]
   activityProgress    ActivityProgress[]
+  quizAttempts        QuizAttempt[]
+  submissions         Submission[]
+  /// 004 US5 (Certificate System batch) — at most one certificate per
+  /// enrollment (this batch only issues COURSE_COMPLETION certificates).
+  certificate         Certificate?
 
   // NOTE: "one ACTIVE/PENDING enrollment per (userId, courseId)" is enforced
   // by a hand-added PARTIAL unique index in the migration (Prisma's DSL
@@ -1934,6 +2854,16 @@ model Product {
   refundPolicy String? @map("refund_policy") @db.Text
   termsVersion String? @map("terms_version") @db.VarChar(40)
 
+  /// 001 FR-062/FR-063, Constitution Article III — mandatory, visible
+  /// disclosure BEFORE any price/CTA renders. `sponsorLabel`/
+  /// `affiliateDisclosure` are the exact text shown; a null label with
+  /// the boolean true falls back to a generic default in the disclosure
+  /// service rather than rendering nothing.
+  isSponsored         Boolean @default(false) @map("is_sponsored")
+  sponsorLabel        String? @map("sponsor_label") @db.VarChar(120)
+  isAffiliate         Boolean @default(false) @map("is_affiliate")
+  affiliateDisclosure String? @map("affiliate_disclosure") @db.VarChar(300)
+
   /// FR-003: only APPROVED/ACTIVE products may ever appear at public
   /// checkout — enforced in the public-read repository query, not just
   /// documented here (Part 1 has no checkout, but the public pricing API
@@ -1949,6 +2879,8 @@ model Product {
 
   prices         ProductPrice[]
   membershipPlan MembershipPlan?
+  /// 002 US4 — checkout-state tracking sessions initiated for this product.
+  checkoutSessions CheckoutSession[]
 
   @@index([type, status])
   @@index([status])
@@ -2267,4 +3199,271 @@ enum EntitlementType {
   REGION_RESTRICTED_ACCESS
 
   @@map("entitlement_type")
+}
+
+// ============================================================================
+// 002-public-website-marketing-funnel — Lead capture, Webinar/Masterclass
+// registration, and Checkout-state tracking. Per spec.md's own Assumptions,
+// this feature owns funnel UI/tracking only — actual payment processing,
+// tax/coupon computation, and entitlement resolution remain 009's; a Coupon
+// here is validation-only scaffolding for the checkout UI, not a billing
+// engine. UTM/campaign attribution is stored INLINE on Lead/CheckoutSession
+// (FR-097) rather than a separate Campaign-registry entity — a full
+// campaign-definition registry (budgets, schedules) is a marketing-ops
+// concern more naturally owned by a later Volume 14 feature; this scope
+// only needs attribution CAPTURED and preserved, which inline fields do.
+// ============================================================================
+
+/// A captured prospect from the lead-magnet funnel (Funnel A) — FR-055/056.
+/// Consent is NOT duplicated here: a Lead's marketing-email consent is a
+/// real `ConsentRecord` row (channel=MARKETING_EMAIL, matched by email),
+/// reusing the existing per-channel/versioned consent model instead of a
+/// second, competing boolean flag (Constitution Article VI).
+model Lead {
+  id String @id @default(uuid()) @db.Uuid
+
+  email       String  @db.VarChar(255)
+  name        String? @db.VarChar(200)
+  mobile      String? @db.VarChar(20)
+  profession  String? @db.VarChar(120)
+  businessStage String? @map("business_stage") @db.VarChar(60)
+  interest    String? @db.VarChar(120)
+
+  /// Which lead magnet (identified by its CMS Page slug) captured this lead.
+  leadMagnetSlug String @map("lead_magnet_slug") @db.VarChar(191)
+
+  // --- FR-097: campaign attribution, captured at the moment of capture ---
+  utmSource   String? @map("utm_source") @db.VarChar(120)
+  utmMedium   String? @map("utm_medium") @db.VarChar(120)
+  utmCampaign String? @map("utm_campaign") @db.VarChar(120)
+  utmTerm     String? @map("utm_term") @db.VarChar(120)
+  utmContent  String? @map("utm_content") @db.VarChar(120)
+  referralCode String? @map("referral_code") @db.VarChar(60)
+  affiliateId  String? @map("affiliate_id") @db.VarChar(60)
+  landingPageVariant String? @map("landing_page_variant") @db.VarChar(60)
+
+  /// FR-024 idempotency-adjacent: a double-submit within a short window is
+  /// deduped by this (leadMagnetSlug, email) uniqueness rather than a
+  /// generic idempotency-key header — a lead capture form has no client
+  /// SDK to attach one, unlike the authenticated LMS/billing APIs.
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([leadMagnetSlug, email])
+  @@index([createdAt])
+  @@map("leads")
+}
+
+/// Funnel B (Webinar/Masterclass) configuration attached to a masterclass
+/// landing Page — deliberately NOT a general Event/Webinar platform entity
+/// (that is 010-events-webinars-live's ownership); this is scoped tightly
+/// to "one CMS page can run one registration-gated masterclass," the exact
+/// shape spec.md's US3 describes, reusing the existing Page infrastructure
+/// rather than building a parallel content type.
+model MasterclassConfig {
+  id     String @id @default(uuid()) @db.Uuid
+  pageId String @unique @map("page_id") @db.Uuid
+  page   Page   @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  scheduledAt           DateTime  @map("scheduled_at") @db.Timestamptz(6)
+  /// FR-058/FR-112: the ONLY source for a registration countdown — never
+  /// client-fabricated.
+  registrationClosesAt  DateTime? @map("registration_closes_at") @db.Timestamptz(6)
+  /// Null = unlimited seats (no scarcity claim rendered).
+  seatLimit             Int?      @map("seat_limit")
+  speakerName           String?   @map("speaker_name") @db.VarChar(200)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  registrations MasterclassRegistration[]
+
+  @@map("masterclass_configs")
+}
+
+model MasterclassRegistration {
+  id       String            @id @default(uuid()) @db.Uuid
+  configId String            @map("config_id") @db.Uuid
+  config   MasterclassConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  name             String  @db.VarChar(200)
+  email            String  @db.VarChar(255)
+  mobile           String? @db.VarChar(20)
+  city             String? @db.VarChar(120)
+  profession       String? @db.VarChar(120)
+  experienceLevel  String? @map("experience_level") @db.VarChar(60)
+  referralCode     String? @map("referral_code") @db.VarChar(60)
+
+  registeredAt DateTime @default(now()) @map("registered_at") @db.Timestamptz(6)
+
+  /// FR-046 edge case: duplicate registration by the same identity is
+  /// rejected at this unique constraint, not just a client-side check.
+  @@unique([configId, email])
+  @@index([configId])
+  @@map("masterclass_registrations")
+}
+
+/// FR-065–071: checkout/payment-STATE tracking only. Real payment
+/// processing, tax computation, and entitlement grants remain 009's — this
+/// row reflects state for the UI and records abandonment; it is never
+/// itself the authority that grants access (Constitution Article I).
+model CheckoutSession {
+  id     String  @id @default(uuid()) @db.Uuid
+  userId String? @map("user_id") @db.Uuid
+  email  String? @db.VarChar(255)
+
+  productId String  @map("product_id") @db.Uuid
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  status         CheckoutSessionStatus @default(NOT_STARTED)
+  lastCompletedStep String?            @map("last_completed_step") @db.VarChar(60)
+  cartValueMinor Int?                  @map("cart_value_minor")
+  currency       String                @default("INR") @db.VarChar(3)
+
+  couponCode String? @map("coupon_code") @db.VarChar(60)
+
+  utmSource   String? @map("utm_source") @db.VarChar(120)
+  utmMedium   String? @map("utm_medium") @db.VarChar(120)
+  utmCampaign String? @map("utm_campaign") @db.VarChar(120)
+
+  /// Set once the session has been idle past the abandonment threshold —
+  /// FR-071. A recovery send (US8, deferred this pass) would consult
+  /// `recoveryEmailSentAt` + the lead/user's ConsentRecord before sending;
+  /// the field exists now so that future work has somewhere to record it
+  /// without a later migration.
+  abandonedAt         DateTime? @map("abandoned_at") @db.Timestamptz(6)
+  recoveryEmailSentAt DateTime? @map("recovery_email_sent_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([status])
+  @@index([abandonedAt])
+  @@map("checkout_sessions")
+}
+
+enum CheckoutSessionStatus {
+  NOT_STARTED
+  PROCESSING
+  REQUIRES_ACTION
+  SUCCESS
+  FAILED
+  CANCELLED
+  PENDING
+  REFUNDED
+  PARTIALLY_REFUNDED
+
+  @@map("checkout_session_status")
+}
+
+/// Checkout-UI validation scaffolding only (FR-066, edge case
+/// COUPON_EXPIRED/COUPON_INVALID) — NOT a commission/discount-computation
+/// engine; the actual charge amount after discount is 009's to compute.
+model Coupon {
+  id   String @id @default(uuid()) @db.Uuid
+  code String @unique @db.VarChar(60)
+
+  discountType  CouponDiscountType @map("discount_type")
+  /// Percentage (0-100) when PERCENTAGE, minor-unit amount when FIXED_AMOUNT.
+  discountValue Int                @map("discount_value")
+
+  validFrom      DateTime? @map("valid_from") @db.Timestamptz(6)
+  validUntil     DateTime? @map("valid_until") @db.Timestamptz(6)
+  maxRedemptions Int?      @map("max_redemptions")
+  redemptionCount Int      @default(0) @map("redemption_count")
+
+  status CouponStatus @default(ACTIVE)
+
+  createdBy String?  @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("coupons")
+}
+
+enum CouponDiscountType {
+  PERCENTAGE
+  FIXED_AMOUNT
+
+  @@map("coupon_discount_type")
+}
+
+enum CouponStatus {
+  ACTIVE
+  PAUSED
+  EXPIRED
+  ARCHIVED
+
+  @@map("coupon_status")
+}
+
+// ============================================================================
+// 003-auth-identity-onboarding-dashboard — Onboarding sequencer + Roadmap.
+// 001 already built `UserLifecycleState` (a flat capture of the SAME goal/
+// experience/business-stage/etc answers, used by its Next-Best-Action
+// resolver) — this feature does NOT duplicate that data. Instead it adds
+// the STEP-BY-STEP progress/resume tracking 001 never needed (001 only
+// cared about the current values, not "which of the 13 steps is the user
+// on"), and writes the SAME answers into `UserLifecycleState` as a side
+// effect of completing the relevant step, so 001's NBA engine keeps working
+// unchanged. `Assessment`/`AssessmentResult` are deliberately folded into
+// `OnboardingStepResponse` (step 11's answer payload) rather than a
+// separate configurable branching-engine entity — no admin-configurable
+// assessment builder is in scope this pass (see plan.md's own "detailed
+// A/B testing... more fully specified in Volume 14" precedent for scoping
+// down a configurable-engine requirement to its actually-needed subset).
+// ============================================================================
+
+model OnboardingStepResponse {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// 1=Welcome, 2=Language, 3=Goal, 4=UserType, 5=Experience, 6=BusinessStage,
+  /// 7=Interests, 8=TimeAvailability, 9=Format, 10=Challenge, 11=Assessment
+  /// (optional). Steps 12 (Roadmap) and 13 (Recommended First Action) are
+  /// system-GENERATED output, not a user answer — see `Roadmap` below.
+  stepNumber Int    @map("step_number")
+  stepKey    String @map("step_key") @db.VarChar(40)
+  answer     Json
+
+  completedAt DateTime @default(now()) @map("completed_at") @db.Timestamptz(6)
+
+  @@unique([userId, stepNumber])
+  @@index([userId])
+  @@map("onboarding_step_responses")
+}
+
+model Roadmap {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @unique @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  goalSummary             String  @map("goal_summary") @db.Text
+  currentStage            String  @map("current_stage") @db.VarChar(60)
+  recommendedLearningPath String? @map("recommended_learning_path") @db.VarChar(200)
+  recommendedFirstCourseSlug String? @map("recommended_first_course_slug") @db.VarChar(220)
+  recommendedCommunityGroup String? @map("recommended_community_group") @db.VarChar(200)
+  recommendedChallenge    String? @map("recommended_challenge") @db.VarChar(200)
+  recommendedEvent        String? @map("recommended_event") @db.VarChar(200)
+  recommendedAiTool       String? @map("recommended_ai_tool") @db.VarChar(200)
+  expectedWeeklyCommitment String? @map("expected_weekly_commitment") @db.VarChar(120)
+  firstMilestone          String  @map("first_milestone") @db.VarChar(300)
+
+  /// FR-095, Constitution Article II: AI-generated roadmaps MUST always
+  /// have a deterministic fallback — this field records which path
+  /// actually produced THIS roadmap, never fabricated as "AI" if the
+  /// fallback engaged.
+  generatedBy RoadmapGenerationSource @map("generated_by")
+
+  generatedAt DateTime @default(now()) @map("generated_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("roadmaps")
+}
+
+enum RoadmapGenerationSource {
+  AI
+  DETERMINISTIC_FALLBACK
+
+  @@map("roadmap_generation_source")
 }

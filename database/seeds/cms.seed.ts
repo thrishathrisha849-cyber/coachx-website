@@ -46,7 +46,19 @@ const PAGES: PageInput[] = [
         },
       },
       {
+        // 002 FR-015 "Problem" section — visitor pain points.
         type: 'FEATURES', order: 2, data: {
+          heading: 'Sound familiar?',
+          items: [
+            { icon: '😓', title: 'Learning without direction', description: 'Endless videos and courses, but no clear next step to take.' },
+            { icon: '🌐', title: 'Content in a language that isn\'t yours', description: 'Most business training assumes English fluency and a Western context.' },
+            { icon: '🧑‍🤝‍🧑', title: 'No one to ask when you\'re stuck', description: 'Learning alone, with no community or mentor to turn to.' },
+            { icon: '📉', title: 'Knowledge that never becomes income', description: 'Finishing courses without ever launching or earning anything real.' },
+          ],
+        },
+      },
+      {
+        type: 'FEATURES', order: 3, data: {
           heading: 'Everything you need to grow',
           items: [
             { icon: '📚', title: 'Structured Learning', description: 'Step-by-step courses built for real outcomes.' },
@@ -59,7 +71,75 @@ const PAGES: PageInput[] = [
         },
       },
       {
-        type: 'CTA', order: 3, data: {
+        // 002 FR-017 "How It Works" — the 6-step journey.
+        type: 'TIMELINE', order: 4, data: {
+          heading: 'How it works',
+          items: [
+            { date: 'Step 1', title: 'Create your account', description: 'Sign up free — no credit card required.' },
+            { date: 'Step 2', title: 'Choose your goal', description: 'Tell us what you want to achieve.' },
+            { date: 'Step 3', title: 'Get your roadmap', description: 'Receive a personalized next-best-action, not a static list.' },
+            { date: 'Step 4', title: 'Learn and complete tasks', description: 'Action-based lessons, not passive video watching.' },
+            { date: 'Step 5', title: 'Get support', description: 'Community, mentors, and AI tools when you need help.' },
+            { date: 'Step 6', title: 'Build and grow your business', description: 'Turn what you learn into a real, running business.' },
+          ],
+        },
+      },
+      {
+        // 002 FR-018 "Audience Segment" — persona cards.
+        type: 'FEATURES', order: 5, data: {
+          heading: 'Built for people like you',
+          items: [
+            { icon: '🎓', title: 'Students', description: 'Start building real business skills before you graduate.' },
+            { icon: '💼', title: 'Freelancers', description: 'Turn your skills into a steady, growing income.' },
+            { icon: '🧑‍🏫', title: 'Coaches', description: 'Package your expertise into a structured, sellable offer.' },
+            { icon: '🎨', title: 'Creators', description: 'Build an audience and monetize your content.' },
+            { icon: '🚀', title: 'Entrepreneurs', description: 'Go from idea to your first paying customer.' },
+            { icon: '🏪', title: 'Small-Business Owners', description: 'Grow and systemize the business you already run.' },
+          ],
+        },
+      },
+      {
+        // 002 FR-019 "Featured Programs" — links to the real course catalog rather than fabricated program data (no separate Program entity — Courses are the real, catalog-backed offering).
+        type: 'FEATURES', order: 6, data: {
+          heading: 'Featured programs',
+          items: [
+            { icon: '🏗️', title: 'Business Foundation', description: 'The core program every member starts with — explore the full course catalog.' },
+            { icon: '📣', title: 'Digital Marketing', description: 'Learn to reach and convert customers online.' },
+            { icon: '💻', title: 'Freelancing Growth', description: 'Package your skills and land better-paying clients.' },
+          ],
+        },
+      },
+      {
+        // 002 FR-020 "Learning Paths".
+        type: 'FEATURES', order: 7, data: {
+          heading: 'Pick a learning path',
+          items: [
+            { icon: '🏁', title: 'Start a Business', description: 'From idea to your first customer.' },
+            { icon: '🧑‍💻', title: 'Become a Freelancer', description: 'Package your skills into a sellable service.' },
+            { icon: '🌟', title: 'Grow Your Personal Brand', description: 'Build an audience that trusts you.' },
+            { icon: '📊', title: 'Learn Digital Marketing', description: 'Reach and convert customers online.' },
+          ],
+        },
+      },
+      {
+        // 002 FR-026 "Membership Preview" — mirrors the real seeded 6-tier catalog (database/seeds/membership-tier.seed.ts); kept in sync manually since this block type is static admin copy, not live-bound (see docs/public-site/CMS_MODEL.md).
+        type: 'PRICING', order: 8, data: {
+          heading: 'Membership plans for every stage',
+          plans: [
+            { name: 'Free', bestFor: 'Anyone exploring the platform', monthlyPrice: 0, annualPrice: 0, features: ['Limited public courses', 'Selected community groups', 'Basic AI usage'], popular: false, cta: { label: 'Start Free', url: '/join' } },
+            { name: 'Growth', bestFor: 'Freelancers, creators, and new business owners', monthlyPrice: 999, annualPrice: 9990, features: ['Full learning paths', 'Weekly live sessions', 'Mentor group sessions'], popular: true, cta: { label: 'View Pricing', url: '/pricing' } },
+            { name: 'Pro', bestFor: 'Coaches and established entrepreneurs', monthlyPrice: 2499, annualPrice: 24990, features: ['Course-creation tools', 'Full CRM', 'Marketplace seller access'], popular: false, cta: { label: 'View Pricing', url: '/pricing' } },
+          ],
+        },
+      },
+      {
+        type: 'FAQ', order: 9, data: {
+          heading: 'Frequently asked questions',
+          categories: ['Platform', 'Membership', 'Payment'],
+        },
+      },
+      {
+        type: 'CTA', order: 10, data: {
           headline: 'Ready to start?',
           description: 'Join thousands of members building their business with CoachX.',
           primaryCta: { label: 'Join Now', url: '/join' },

@@ -1,11 +1,8 @@
 import axios, { AxiosError, type InternalAxiosRequestConfig } from 'axios';
 import { env } from '@/config/env';
+import { tokenStore } from './token-store';
 
-/**
- * Shared Axios instance for the admin portal. Admin-role auth-token
- * attachment belongs to the authentication feature module and is added
- * in a later implementation phase.
- */
+/** Shared Axios instance for the admin portal — attaches the logged-in admin's access token (001 FR-023: admin surface is role-gated, every request must be authenticated). */
 export const apiClient = axios.create({
   baseURL: env.apiBaseUrl,
   withCredentials: true,
@@ -15,7 +12,11 @@ export const apiClient = axios.create({
   },
 });
 
-apiClient.interceptors.request.use((requestConfig: InternalAxiosRequestConfig) => requestConfig);
+apiClient.interceptors.request.use((requestConfig: InternalAxiosRequestConfig) => {
+  const token = tokenStore.get();
+  if (token) requestConfig.headers.set('Authorization', `Bearer ${token}`);
+  return requestConfig;
+});
 
 export interface NormalizedApiError {
   status: number | null;

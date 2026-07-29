@@ -13,6 +13,8 @@ import { findActivityProgressForLesson, upsertActivityViewed } from './activity-
 import { evaluateLessonAccess, isModulePrerequisiteSatisfied } from './access-evaluator.service';
 import { computeModuleProgress } from './progress.service';
 import { scopedIdempotencyKey } from './lms-idempotency.util';
+import { findQuizByLessonId, hasPassedQuiz } from './quiz.repository';
+import { findAssignmentByLessonId, hasApprovedSubmission } from './assignment.repository';
 import type { TransactionClient } from '../database/transaction';
 
 /**
@@ -81,7 +83,7 @@ export async function completeLessonForEnrollment(
 // required conditions.")
 // =============================================================================
 
-type EffectiveRule = 'MANUAL' | 'MINIMUM_WATCH_PERCENT' | 'ALL_ACTIVITIES_VIEWED' | 'INSTRUCTOR_APPROVAL';
+type EffectiveRule = 'MANUAL' | 'MINIMUM_WATCH_PERCENT' | 'ALL_ACTIVITIES_VIEWED' | 'INSTRUCTOR_APPROVAL' | 'QUIZ_PASS' | 'ASSIGNMENT_APPROVED';
 
 /**
  * The authoritative set of completion conditions for a lesson. Prefers the
@@ -156,6 +158,16 @@ async function evaluateAutomaticRules(
       case 'INSTRUCTOR_APPROVAL':
         satisfied = await hasLiveOverride(enrollmentId, 'LESSON', lesson.id, tx);
         break;
+      case 'QUIZ_PASS': {
+        const quiz = await findQuizByLessonId(lesson.id, tx);
+        satisfied = quiz ? await hasPassedQuiz(enrollmentId, quiz.id, tx) : false;
+        break;
+      }
+      case 'ASSIGNMENT_APPROVED': {
+        const assignment = await findAssignmentByLessonId(lesson.id, tx);
+        satisfied = assignment ? await hasApprovedSubmission(enrollmentId, assignment.id, tx) : false;
+        break;
+      }
       default:
         satisfied = true;
     }
@@ -272,6 +284,66 @@ export async function maybeAutoCompleteFromProgress(userId: string, lessonId: st
   if (!enrollment) return;
 
   const evaluation = await evaluateAutomaticRules(enrollment.id, lesson, currentPercent);
+  if (evaluation.unmet.length > 0) return;
+
+  await withTransaction(async (tx) => {
+    await completeLessonForEnrollment(enrollment.id, lessonId, 'SIGNAL_DERIVED', userId, tx);
+    await recomputeEnrollmentCompletion(enrollment.id, module_.courseId, userId, tx);
+  });
+}
+
+/**
+ * 004 US3 (Quiz System batch) — the QUIZ_PASS analogue of
+ * `maybeAutoCompleteFromProgress`. Called after a quiz attempt is graded.
+ * A separate function rather than reusing the progress one, since that
+ * function's own early-return is hard-gated on `MINIMUM_WATCH_PERCENT`
+ * being part of the lesson's rule set — a QUIZ_PASS-only lesson would
+ * never reach its evaluation otherwise.
+ */
+export async function maybeAutoCompleteFromQuizPass(userId: string, lessonId: string): Promise<void> {
+  const lesson = await findLessonById(lessonId);
+  if (!lesson) return;
+
+  const rules = getEffectiveCompletionRules(lesson);
+  if (rules.includes('MANUAL') || rules.includes('INSTRUCTOR_APPROVAL')) return;
+  if (!rules.includes('QUIZ_PASS')) return;
+
+  const module_ = await findModuleById(lesson.moduleId);
+  if (!module_) return;
+  const enrollment = await findEnrollmentForUserAndCourse(userId, module_.courseId);
+  if (!enrollment) return;
+
+  const evaluation = await evaluateAutomaticRules(enrollment.id, lesson, 0, undefined);
+  if (evaluation.unmet.length > 0) return;
+
+  await withTransaction(async (tx) => {
+    await completeLessonForEnrollment(enrollment.id, lessonId, 'SIGNAL_DERIVED', userId, tx);
+    await recomputeEnrollmentCompletion(enrollment.id, module_.courseId, userId, tx);
+  });
+}
+
+/**
+ * 004 US4 (Assignment System batch) — the ASSIGNMENT_APPROVED analogue of
+ * `maybeAutoCompleteFromQuizPass`. Called after a submission is reviewed
+ * with an APPROVE decision. A separate function rather than reusing the
+ * progress-triggered one, for the same reason `maybeAutoCompleteFromQuizPass`
+ * is separate: that function's early-return is hard-gated on
+ * `MINIMUM_WATCH_PERCENT` being part of the lesson's rule set.
+ */
+export async function maybeAutoCompleteFromAssignmentApproval(userId: string, lessonId: string): Promise<void> {
+  const lesson = await findLessonById(lessonId);
+  if (!lesson) return;
+
+  const rules = getEffectiveCompletionRules(lesson);
+  if (rules.includes('MANUAL') || rules.includes('INSTRUCTOR_APPROVAL')) return;
+  if (!rules.includes('ASSIGNMENT_APPROVED')) return;
+
+  const module_ = await findModuleById(lesson.moduleId);
+  if (!module_) return;
+  const enrollment = await findEnrollmentForUserAndCourse(userId, module_.courseId);
+  if (!enrollment) return;
+
+  const evaluation = await evaluateAutomaticRules(enrollment.id, lesson, 0, undefined);
   if (evaluation.unmet.length > 0) return;
 
   await withTransaction(async (tx) => {

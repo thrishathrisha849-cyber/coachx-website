@@ -209,13 +209,17 @@ export async function updateCmsPage(
   });
 }
 
-/** FR-087: Draft → Review → Approved → Scheduled → Published → Archived. */
+/** FR-087/001 FR-097: Draft → Review → Approved → Scheduled → Published → Unpublished → Archived. */
 const VALID_TRANSITIONS: Record<string, string[]> = {
   DRAFT: ['REVIEW', 'ARCHIVED'],
   REVIEW: ['DRAFT', 'APPROVED', 'ARCHIVED'],
   APPROVED: ['SCHEDULED', 'PUBLISHED', 'DRAFT', 'ARCHIVED'],
   SCHEDULED: ['PUBLISHED', 'APPROVED', 'ARCHIVED'],
-  PUBLISHED: ['ARCHIVED', 'DRAFT'],
+  // 001 FR-097: taking a live page down is UNPUBLISHED, not ARCHIVED —
+  // ARCHIVED is a separate, more final retirement a moderator chooses
+  // explicitly, never an automatic synonym for "no longer published."
+  PUBLISHED: ['UNPUBLISHED', 'ARCHIVED', 'DRAFT'],
+  UNPUBLISHED: ['PUBLISHED', 'DRAFT', 'ARCHIVED'],
   ARCHIVED: ['DRAFT'],
 };
 

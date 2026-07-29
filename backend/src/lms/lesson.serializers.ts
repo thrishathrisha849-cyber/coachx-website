@@ -111,7 +111,32 @@ export function toPublicLessonSummary(row: LessonRow): PublicLessonSummary {
   };
 }
 
-export function toPublicLessonDetail(row: LessonRow, activities: ActivityRow[]): PublicLessonDetail {
+type QuizSummaryRow = {
+  id: string;
+  title: string;
+  quizType: string;
+  passingScorePercent: number;
+  maxAttempts: number | null;
+  timeLimitMinutes: number | null;
+} | null;
+
+type AssignmentSummaryRow = {
+  id: string;
+  title: string;
+  instructions: string | null;
+  submissionFormat: string;
+  dueAt: Date | null;
+  maxScore: number;
+  passingScore: number;
+  maxAttempts: number | null;
+} | null;
+
+export function toPublicLessonDetail(
+  row: LessonRow,
+  activities: ActivityRow[],
+  quiz: QuizSummaryRow = null,
+  assignment: AssignmentSummaryRow = null,
+): PublicLessonDetail {
   return {
     ...toPublicLessonSummary(row),
     description: row.description,
@@ -121,6 +146,28 @@ export function toPublicLessonDetail(row: LessonRow, activities: ActivityRow[]):
       .filter((a) => a.status === 'PUBLISHED')
       .sort((a, b) => a.position - b.position)
       .map(toPublicActivity),
+    quiz: quiz
+      ? {
+          id: quiz.id,
+          title: quiz.title,
+          quizType: quiz.quizType,
+          passingScorePercent: quiz.passingScorePercent,
+          maxAttempts: quiz.maxAttempts,
+          timeLimitMinutes: quiz.timeLimitMinutes,
+        }
+      : null,
+    assignment: assignment
+      ? {
+          id: assignment.id,
+          title: assignment.title,
+          instructions: assignment.instructions,
+          submissionFormat: assignment.submissionFormat,
+          dueAt: assignment.dueAt,
+          maxScore: assignment.maxScore,
+          passingScore: assignment.passingScore,
+          maxAttempts: assignment.maxAttempts,
+        }
+      : null,
   };
 }
 

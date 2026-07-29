@@ -23,6 +23,13 @@ export interface PublicProduct {
   pricingModel: string;
   currency: string;
   fulfilmentMethod: string;
+  /// 001 FR-062/FR-063, Constitution Article III — always present in the
+  /// PUBLIC shape (not admin-only) so the frontend can render the
+  /// disclosure label before any price/CTA, never after.
+  isSponsored: boolean;
+  sponsorLabel: string | null;
+  isAffiliate: boolean;
+  affiliateDisclosure: string | null;
 }
 
 /** Admin-facing product shape — includes lifecycle/audit fields. */

@@ -203,6 +203,13 @@ export async function computeModuleProgress(enrollmentId: string, moduleId: stri
     completedMandatoryLessons: completedMandatory,
     percentage,
     isComplete: mandatory.length === 0 ? lessons.length === 0 : completedMandatory === mandatory.length,
+    // Per-lesson status for the lesson-player curriculum sidebar (US2) —
+    // additive field, existing callers (`completion.service.ts`'s
+    // `isModuleCompleteForEnrollment`) only read `.isComplete` and are
+    // unaffected.
+    lessons: lessons
+      .sort((a, b) => a.position - b.position)
+      .map((l) => ({ id: l.id, status: progressByLesson.get(l.id)?.status ?? 'NOT_STARTED' })),
   };
 }
 

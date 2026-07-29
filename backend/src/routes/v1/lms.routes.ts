@@ -65,6 +65,7 @@ import {
   postCourse,
   getCoursesAdmin,
   getCourseByIdAdmin,
+  getCourseVersionsAdmin,
   patchCourse,
   postCourseStatus,
   postArchiveCourse,
@@ -128,12 +129,102 @@ import {
   getMyEnrollments,
   getMyCourseAccess,
   getMyCourseProgress,
+  getMyCourseCurriculum,
   getMyContinueLearning,
   getMyLesson,
   postMyLessonProgress,
   postMyLessonComplete,
   postMyActivityViewed,
+  getMyCertificates,
+  getMyCertificateDetail,
+  getMyCertificateEligibility,
+  postMyCertificate,
 } from '../../lms/student-lms.controller';
+import {
+  assignCourseToOrgMembersSchema,
+  orgEnrollmentQuerySchema,
+  orgRemoveAccessSchema,
+  orgSetDeadlineSchema,
+} from '../../lms/org-assignment.validation';
+import {
+  postAssignCourseToOrgMembers,
+  getOrganizationEnrollments,
+  postRemoveOrgMemberAccess,
+  postSetOrgMemberDeadline,
+} from '../../lms/org-assignment.controller';
+import {
+  createQuizSchema,
+  updateQuizSchema,
+  changeQuizStatusSchema,
+  quizIdParamSchema,
+  createQuestionSchema,
+  updateQuestionSchema,
+  questionIdParamSchema,
+  reorderQuestionsSchema,
+  attemptIdParamSchema,
+  submitAnswerSchema,
+} from '../../lms/quiz.validation';
+import {
+  postQuiz,
+  getQuizByLessonId,
+  getQuizByIdAdmin,
+  patchQuiz,
+  postQuizStatus,
+  postQuestion,
+  patchQuestion,
+  postArchiveQuestion,
+  postReorderQuestions,
+} from '../../lms/quiz.controller';
+import {
+  getMyQuizOverview,
+  postStartAttempt,
+  getMyAttempt,
+  postSaveAnswer,
+  postSubmitAttempt,
+} from '../../lms/quiz-attempt.controller';
+import {
+  createAssignmentSchema,
+  updateAssignmentSchema,
+  changeAssignmentStatusSchema,
+  assignmentIdParamSchema,
+  createCriterionSchema,
+  updateCriterionSchema,
+  criterionIdParamSchema,
+  submissionIdParamSchema,
+  saveDraftSchema,
+  reviewSubmissionSchema,
+  listSubmissionsQuerySchema,
+} from '../../lms/assignment.validation';
+import {
+  postAssignment,
+  getAssignmentByLessonId,
+  getAssignmentByIdAdmin,
+  patchAssignment,
+  postAssignmentStatus,
+  postCriterion,
+  patchCriterion,
+  postArchiveCriterion,
+} from '../../lms/assignment.controller';
+import {
+  postStartSubmission,
+  getMySubmissions,
+  getMySubmissionDetail,
+  patchMySubmission,
+  postSubmitSubmission,
+  getSubmissionsForReview,
+  getSubmissionByIdAdmin,
+  postReviewSubmission,
+} from '../../lms/assignment-submission.controller';
+import { createTemplateSchema, updateTemplateSchema, mapCourseTemplateSchema, revokeCertificateSchema, credentialIdParamSchema, certificateIdParamSchema, courseIdParamSchema as certificateCourseIdParamSchema } from '../../lms/certificate.validation';
+import {
+  getTemplatesAdmin,
+  postTemplate,
+  patchTemplate,
+  postCourseTemplateMapping,
+  getCertificatesForCourseAdmin,
+  postRevokeCertificate,
+  getPublicCertificateVerification,
+} from '../../lms/certificate.controller';
 
 /**
  * Phase 6 Part 1 — LMS course-engine/category/module routes. Mounted at
@@ -158,6 +249,8 @@ router.get('/categories', cacheControl, validate(publicCategoryQuerySchema), get
 router.get('/courses', cacheControl, validate(publicCourseQuerySchema), getPublicCourses);
 router.get('/courses/:slug', cacheControl, validate(courseSlugParamSchema), getPublicCourseDetail);
 router.get('/courses/:slug/modules', cacheControl, validate(publicCourseModulesParamSchema), getPublicCourseModules);
+// FR-085 public verification — no auth, no permission check; deliberately open (that's the point of a verifiable credential).
+router.get('/certificates/verify/:credentialId', cacheControl, validate(credentialIdParamSchema), getPublicCertificateVerification);
 
 // --- Admin: categories ---------------------------------------------------
 const adminCategoryPermission = requirePermission('course.category.manage');
@@ -173,6 +266,7 @@ router.post('/admin/categories/:id/restore', authenticate, adminCategoryPermissi
 router.post('/admin/courses', authenticate, requirePermission('course.create'), validate(createCourseSchema), postCourse);
 router.get('/admin/courses', authenticate, requirePermission('course.view'), validate(adminCourseQuerySchema), getCoursesAdmin);
 router.get('/admin/courses/:id', authenticate, requirePermission('course.view'), validate(courseIdParamSchema), getCourseByIdAdmin);
+router.get('/admin/courses/:id/versions', authenticate, requirePermission('course.view'), validate(courseIdParamSchema), getCourseVersionsAdmin);
 router.patch('/admin/courses/:id', authenticate, requirePermission('course.update'), validate(updateCourseSchema), patchCourse);
 // course.update is the ROUTE-level baseline; postCourseStatus itself does a
 // second, body-aware check requiring course.publish for PUBLISHED/SCHEDULED.
@@ -220,6 +314,49 @@ router.get('/admin/lessons/:lessonId/activities', authenticate, requirePermissio
 router.patch('/admin/activities/:activityId', authenticate, manageModules, validate(updateActivitySchema), patchActivity);
 router.post('/admin/lessons/:lessonId/activities/reorder', authenticate, manageModules, validate(reorderActivitiesSchema), postReorderActivities);
 router.post('/admin/activities/:activityId/archive', authenticate, manageModules, validate(activityIdParamSchema), postArchiveActivity);
+
+// --- Admin: quizzes + questions (004 US3 Quiz System batch) ---------------
+// Reuses `course.module.manage` — same tier lesson/activity authoring
+// already uses (a quiz is content belonging to a lesson, not a materially
+// different privilege). No per-instructor ownership check at this `/admin/*`
+// tier, matching the existing lesson/activity admin endpoints.
+router.post('/admin/lessons/:lessonId/quiz', authenticate, manageModules, validate(createQuizSchema), postQuiz);
+router.get('/admin/lessons/:lessonId/quiz', authenticate, requirePermission('course.view'), validate(lessonIdParamSchema), getQuizByLessonId);
+router.get('/admin/quizzes/:quizId', authenticate, requirePermission('course.view'), validate(quizIdParamSchema), getQuizByIdAdmin);
+router.patch('/admin/quizzes/:quizId', authenticate, manageModules, validate(updateQuizSchema), patchQuiz);
+router.post('/admin/quizzes/:quizId/status', authenticate, manageModules, validate(changeQuizStatusSchema), postQuizStatus);
+router.post('/admin/quizzes/:quizId/questions', authenticate, manageModules, validate(createQuestionSchema), postQuestion);
+router.patch('/admin/questions/:questionId', authenticate, manageModules, validate(updateQuestionSchema), patchQuestion);
+router.post('/admin/questions/:questionId/archive', authenticate, manageModules, validate(questionIdParamSchema), postArchiveQuestion);
+router.post('/admin/quizzes/:quizId/questions/reorder', authenticate, manageModules, validate(reorderQuestionsSchema), postReorderQuestions);
+
+// --- Admin: assignments + rubric criteria (004 US4 Assignment System batch) -
+// Same permission tier as quizzes above — an assignment is content
+// belonging to a lesson, reviewed by the same admin/instructor tier.
+router.post('/admin/lessons/:lessonId/assignment', authenticate, manageModules, validate(createAssignmentSchema), postAssignment);
+router.get('/admin/lessons/:lessonId/assignment', authenticate, requirePermission('course.view'), validate(lessonIdParamSchema), getAssignmentByLessonId);
+router.get('/admin/assignments/:assignmentId', authenticate, requirePermission('course.view'), validate(assignmentIdParamSchema), getAssignmentByIdAdmin);
+router.patch('/admin/assignments/:assignmentId', authenticate, manageModules, validate(updateAssignmentSchema), patchAssignment);
+router.post('/admin/assignments/:assignmentId/status', authenticate, manageModules, validate(changeAssignmentStatusSchema), postAssignmentStatus);
+router.post('/admin/assignments/:assignmentId/criteria', authenticate, manageModules, validate(createCriterionSchema), postCriterion);
+router.patch('/admin/criteria/:criterionId', authenticate, manageModules, validate(updateCriterionSchema), patchCriterion);
+router.post('/admin/criteria/:criterionId/archive', authenticate, manageModules, validate(criterionIdParamSchema), postArchiveCriterion);
+
+// --- Admin/reviewer: submissions (004 US4) ---------------------------------
+router.get('/admin/assignments/:assignmentId/submissions', authenticate, manageModules, validate(listSubmissionsQuerySchema), getSubmissionsForReview);
+router.get('/admin/submissions/:submissionId', authenticate, manageModules, validate(submissionIdParamSchema), getSubmissionByIdAdmin);
+router.post('/admin/submissions/:submissionId/review', authenticate, manageModules, validate(reviewSubmissionSchema), postReviewSubmission);
+
+// --- Admin: certificate templates + certificates (004 US5 Certificate System batch) -
+// Template CRUD reuses `course.module.manage` (same authoring tier as
+// quiz/assignment content); revocation reuses `course.manageInstructors`
+// (same tier as enrollment admin lifecycle actions) — no new permission invented.
+router.get('/admin/certificate-templates', authenticate, requirePermission('course.view'), getTemplatesAdmin);
+router.post('/admin/certificate-templates', authenticate, manageModules, validate(createTemplateSchema), postTemplate);
+router.patch('/admin/certificate-templates/:templateId', authenticate, manageModules, validate(updateTemplateSchema), patchTemplate);
+router.post('/admin/courses/:courseId/certificate-template', authenticate, manageModules, validate(mapCourseTemplateSchema), postCourseTemplateMapping);
+router.get('/admin/courses/:courseId/certificates', authenticate, requirePermission('course.view'), validate(certificateCourseIdParamSchema), getCertificatesForCourseAdmin);
+router.post('/admin/certificates/:certificateId/revoke', authenticate, manageInstructors, validate(revokeCertificateSchema), postRevokeCertificate);
 
 // --- Admin: enrollments (Phase 6 Part 2B, FR-112) --------------------------
 // Enrollment grant/lifecycle actions reuse `course.manageInstructors` —
@@ -276,6 +413,7 @@ router.post('/me/enrollments', authenticate, meBaseline, validate(selfEnrollSche
 router.get('/me/enrollments', authenticate, meBaseline, getMyEnrollments);
 router.get('/me/courses/:courseId/access', authenticate, meBaseline, validate(meCourseIdParamSchema), getMyCourseAccess);
 router.get('/me/courses/:courseId/progress', authenticate, meBaseline, validate(meCourseIdParamSchema), getMyCourseProgress);
+router.get('/me/courses/:courseId/curriculum', authenticate, meBaseline, validate(meCourseIdParamSchema), getMyCourseCurriculum);
 router.get('/me/courses/:courseId/continue-learning', authenticate, meBaseline, validate(meCourseIdParamSchema), getMyContinueLearning);
 router.get('/me/lessons/:lessonId', authenticate, meBaseline, validate(lessonIdParamSchema), getMyLesson);
 router.post('/me/lessons/:lessonId/progress', authenticate, meBaseline, validate(updateLessonProgressSchema), postMyLessonProgress);
@@ -285,5 +423,38 @@ router.post('/me/lessons/:lessonId/complete', authenticate, meBaseline, validate
 // docs/lms/COMPLETION_ENGINE.md). Reuses the existing admin
 // `activityIdParamSchema` — the params shape is identical.
 router.post('/me/activities/:activityId/viewed', authenticate, meBaseline, validate(activityIdParamSchema), postMyActivityViewed);
+
+// --- Student-facing quiz attempts (004 US3 Quiz System batch) -------------
+router.get('/me/quizzes/:quizId', authenticate, meBaseline, validate(quizIdParamSchema), getMyQuizOverview);
+router.post('/me/quizzes/:quizId/attempts', authenticate, meBaseline, validate(quizIdParamSchema), postStartAttempt);
+router.get('/me/quiz-attempts/:attemptId', authenticate, meBaseline, validate(attemptIdParamSchema), getMyAttempt);
+router.post('/me/quiz-attempts/:attemptId/answers/:questionId', authenticate, meBaseline, validate(submitAnswerSchema), postSaveAnswer);
+router.post('/me/quiz-attempts/:attemptId/submit', authenticate, meBaseline, validate(attemptIdParamSchema), postSubmitAttempt);
+
+// --- Student-facing assignment submissions (004 US4 Assignment System batch) -
+router.post('/me/assignments/:assignmentId/submissions', authenticate, meBaseline, validate(assignmentIdParamSchema), postStartSubmission);
+router.get('/me/assignments/:assignmentId/submissions', authenticate, meBaseline, validate(assignmentIdParamSchema), getMySubmissions);
+router.get('/me/submissions/:submissionId', authenticate, meBaseline, validate(submissionIdParamSchema), getMySubmissionDetail);
+router.patch('/me/submissions/:submissionId', authenticate, meBaseline, validate(saveDraftSchema), patchMySubmission);
+router.post('/me/submissions/:submissionId/submit', authenticate, meBaseline, validate(submissionIdParamSchema), postSubmitSubmission);
+
+// --- Student-facing certificates (004 US5 Certificate System batch) -------
+router.get('/me/certificates', authenticate, meBaseline, getMyCertificates);
+router.get('/me/certificates/:certificateId', authenticate, meBaseline, validate(certificateIdParamSchema), getMyCertificateDetail);
+router.get('/me/courses/:courseId/certificate-eligibility', authenticate, meBaseline, validate(certificateCourseIdParamSchema), getMyCertificateEligibility);
+router.post('/me/courses/:courseId/certificate', authenticate, meBaseline, validate(certificateCourseIdParamSchema), postMyCertificate);
+
+// --- Organization-admin course assignment (004 FR-033) --------------------
+// `organization.manage_own` — the SAME own-org-scoped permission
+// `organization/organization-admin.controller.ts` already uses; every
+// handler additionally re-verifies the target user/enrollment belongs to
+// the actor's own organization inside `org-assignment.service.ts` (RBAC
+// alone is not the access boundary here, matching this repo's established
+// "hiding a UI control is not a security control" / defense-in-depth rule).
+const orgManageOwn = requirePermission('organization.manage_own');
+router.post('/organization/courses/:courseId/assign', authenticate, orgManageOwn, validate(assignCourseToOrgMembersSchema), postAssignCourseToOrgMembers);
+router.get('/organization/enrollments', authenticate, orgManageOwn, validate(orgEnrollmentQuerySchema), getOrganizationEnrollments);
+router.post('/organization/enrollments/:enrollmentId/revoke', authenticate, orgManageOwn, validate(orgRemoveAccessSchema), postRemoveOrgMemberAccess);
+router.post('/organization/enrollments/:enrollmentId/deadline', authenticate, orgManageOwn, validate(orgSetDeadlineSchema), postSetOrgMemberDeadline);
 
 export const lmsRouter = router;

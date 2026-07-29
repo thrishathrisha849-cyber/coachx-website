@@ -89,6 +89,16 @@ export const BASELINE_PERMISSIONS: BaselinePermission[] = [
   // `course.category.manage` covers its whole nested surface rather than
   // one permission per admin action. See docs/billing/RBAC.md.
   { key: 'billing.catalog.manage', description: 'Create/edit/publish/archive Products, Prices, Membership Plans, Plan Versions, and Plan Entitlements (009 FR-001–FR-014)' },
+
+  // --- 001 Governance Foundation ---------------------------------------
+  // `community.moderate` (already defined above) is deliberately REUSED
+  // for Trust & Safety case review/action/appeal-resolution — reporting
+  // itself (FR-090) requires no special permission, only authentication
+  // ("every user"), so no new `trust_safety.report` permission is needed.
+  { key: 'organization.create', description: 'Create a new Organization (001 FR-053/FR-086 — distinct from organization.manage_own, which scopes an Organization Admin to their OWN org only)' },
+  { key: 'milestone.verify', description: 'Verify or reject a claimed Achiever-stage business milestone (001 FR-045, Constitution Article VIII)' },
+  { key: 'governance.manage', description: 'Advance a feature through the governance-sequence workflow and manage phase gating (001 FR-083, FR-078–FR-082)' },
+  { key: 'kpi.view', description: 'View the Business KPI instrumentation dashboard (001 FR-064–FR-068)' },
 ];
 
 /**
@@ -124,7 +134,7 @@ export const ROLE_PERMISSION_GRANTS: Record<RoleName, string[]> = {
     'course.category.manage',
     'content.manage',
   ],
-  finance_admin: ['course.view', 'payment.refund', 'billing.catalog.manage'],
+  finance_admin: ['course.view', 'payment.refund', 'billing.catalog.manage', 'kpi.view'],
   platform_admin: [
     'course.view',
     'course.create',
@@ -141,6 +151,10 @@ export const ROLE_PERMISSION_GRANTS: Record<RoleName, string[]> = {
     'ticket.manage',
     'content.manage',
     'billing.catalog.manage',
+    'organization.create',
+    'milestone.verify',
+    'governance.manage',
+    'kpi.view',
   ],
   super_admin: BASELINE_PERMISSIONS.map((p) => p.key),
   organization_admin: ['course.view', 'organization.manage_own'],

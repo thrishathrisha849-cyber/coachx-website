@@ -62,6 +62,21 @@ export const envSchema = z.object({
 
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   RATE_LIMIT_MAX_REQUESTS: z.coerce.number().int().positive().default(120),
+
+  // --- 001 Next-Best-Action (FR-014) ---------------------------------
+  // The slug of the canonical "Business Foundation Module" course the
+  // Next-Best-Action chain checks completion of. A single admin-set
+  // slug, not a new settings table, for one platform-wide flag — an
+  // admin creates/publishes the actual course via the existing LMS CMS
+  // with this slug.
+  LIFECYCLE_FOUNDATION_COURSE_SLUG: z.string().default('business-foundation'),
+
+  // --- 002 Checkout webhook (FR-104) ----------------------------------
+  // HMAC shared secret verifying payment-callback authenticity. A
+  // dev-only, obviously-fake default (same convention as the JWT/MFA
+  // dev secrets above) — a real deployment MUST override this once a
+  // real payment gateway (009) is wired in.
+  CHECKOUT_WEBHOOK_SECRET: z.string().default('dev-only-insecure-checkout-webhook-secret'),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -148,6 +163,14 @@ export const config = {
   rateLimit: {
     windowMs: env.RATE_LIMIT_WINDOW_MS,
     maxRequests: env.RATE_LIMIT_MAX_REQUESTS,
+  },
+
+  lifecycle: {
+    foundationCourseSlug: env.LIFECYCLE_FOUNDATION_COURSE_SLUG,
+  },
+
+  checkout: {
+    webhookSecret: env.CHECKOUT_WEBHOOK_SECRET,
   },
 } as const;
 

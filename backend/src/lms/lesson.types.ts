@@ -62,6 +62,19 @@ export interface PublicLessonDetail extends PublicLessonSummary {
   /** Non-empty only when this lesson combines multiple conditions (FR-052) — empty means `completionRuleType` alone applies. */
   completionRuleTypes: string[];
   activities: PublicLearningActivity[];
+  /** 004 US3 (Quiz System batch) — present only when this lesson has an attached, PUBLISHED Quiz. Metadata only (id/title/attempt limits) — never questions/answers here; those are only ever served via the dedicated `/me/quizzes/:quizId`+attempt endpoints, gated by their own access check. */
+  quiz: { id: string; title: string; quizType: string; passingScorePercent: number; maxAttempts: number | null; timeLimitMinutes: number | null } | null;
+  /** 004 US4 (Assignment System batch) — present only when this lesson has an attached, PUBLISHED Assignment. Metadata only — never another learner's submissions/reviewer-only fields here. */
+  assignment: {
+    id: string;
+    title: string;
+    instructions: string | null;
+    submissionFormat: string;
+    dueAt: Date | null;
+    maxScore: number;
+    passingScore: number;
+    maxAttempts: number | null;
+  } | null;
 }
 
 /** Admin/instructor-facing lesson shape — the full editable record. */

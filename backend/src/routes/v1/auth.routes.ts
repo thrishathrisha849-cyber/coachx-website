@@ -44,6 +44,7 @@ import {
 import { getSessions, deleteSession } from '../../auth/session.controller';
 import { getMe } from '../../auth/me.controller';
 import { patchUserRole } from '../../auth/admin-identity.controller';
+import { getMyLifecycleState, getMyNextBestAction } from '../../lifecycle/lifecycle.controller';
 
 /**
  * Phase 4 — Authentication, Identity & RBAC routes. Only the endpoints
@@ -86,6 +87,9 @@ export const authRouter = router;
  */
 export const meRouter = Router();
 meRouter.get('/', authenticate, getMe);
+/** 001 FR-014/FR-017/FR-039–046 — the user's own lifecycle state and next-best-action. */
+meRouter.get('/lifecycle', authenticate, getMyLifecycleState);
+meRouter.get('/next-best-action', authenticate, getMyNextBestAction);
 
 /**
  * Admin identity routes (003 FR-130) — backend API only, no admin UI
