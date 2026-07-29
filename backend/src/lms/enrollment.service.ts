@@ -4,6 +4,7 @@ import { withTransaction } from '../database/transaction';
 import { normalizeDatabaseError } from '../database/db-error';
 import { recordAuditEvent } from '../database/audit-event.repository';
 import { beginIdempotentOperation } from '../database/idempotency.service';
+import { recordLearningEvent } from './learning-event.service';
 import { parsePaginationParams, buildPaginationMeta } from '../database/pagination';
 import type { PaginationMeta } from '@coachx/shared';
 import { findCourseById } from './course.repository';
@@ -133,6 +134,11 @@ async function createEnrollmentInternal(
         afterState: { courseId, userId, source, status: 'ACTIVE' },
         reason: options.reason ?? null,
       },
+      tx,
+    );
+
+    await recordLearningEvent(
+      { eventType: 'COURSE_ENROLLED', userId, courseId, enrollmentId: enrollment.id, metadata: { source } },
       tx,
     );
 

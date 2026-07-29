@@ -16,6 +16,26 @@ import { useDocumentHead } from '@/hooks/useDocumentHead';
 
 type LoadState = 'loading' | 'ready' | 'locked' | 'error';
 
+/** 004 US6 polish batch (T082) — human-readable unlock countdown/date, replacing the plain 🔒 icon with real information from `curriculum.service.ts`'s `unlockAt`/`lockReason`. */
+const LOCK_REASON_LABEL: Record<string, string> = {
+  PREREQUISITE_NOT_MET: 'Complete the previous module to unlock',
+  MODULE_LOCKED: 'Not yet available',
+  ENROLLMENT_REQUIRED: 'Enroll to access',
+};
+
+function formatUnlockInfo(lockReason?: string, unlockAt?: string): string {
+  if (unlockAt) {
+    const target = new Date(unlockAt);
+    const diffMs = target.getTime() - Date.now();
+    if (diffMs <= 0) return 'Unlocking soon';
+    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays <= 1) return 'Unlocks in less than a day';
+    if (diffDays < 30) return `Unlocks in ${diffDays} day${diffDays === 1 ? '' : 's'}`;
+    return `Unlocks ${target.toLocaleDateString()}`;
+  }
+  return (lockReason && LOCK_REASON_LABEL[lockReason]) || 'Not yet available';
+}
+
 /**
  * 004 US2 — the lesson-consumption frontend. Renders each activity by
  * type (video/audio/article/pdf/download/external-link/embed), tracks
@@ -136,7 +156,11 @@ export function LessonPlayerPage() {
             <div key={module_.id} className="mb-3">
               <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                 {module_.title}
-                {module_.locked && ' 🔒'}
+                {module_.locked && (
+                  <span className="ml-1 normal-case text-slate-400">
+                    🔒 {formatUnlockInfo(module_.lockReason, module_.unlockAt)}
+                  </span>
+                )}
               </p>
               <ul>
                 {module_.lessons.map((l) => (

@@ -183,11 +183,15 @@ describe('lms.validation — changeCourseStatusSchema (004 FR-015/FR-100 alignme
 describe('lms.validation — createModuleSchema (004 FR-016/FR-034/FR-052 fields)', () => {
   const courseId = '11111111-1111-1111-1111-111111111111';
 
-  it('accepts a minimal module and defaults releaseRuleType/completionRuleType', () => {
+  it('accepts a minimal module, defaults completionRuleType, and leaves releaseRuleType undefined for the service layer to derive (004 US6 polish batch)', () => {
     const result = createModuleSchema.safeParse({ body: { title: 'Module 1' }, params: { courseId }, query: {} });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.body.releaseRuleType).toBe('IMMEDIATE');
+      // Deliberately NOT defaulted here — `module.service.ts`'s
+      // `deriveModuleSequencingDefaults` decides this from the course's
+      // `sequencingMode` when the caller omits it (see that file's doc
+      // comment), so a schema-level default would silently override it.
+      expect(result.data.body.releaseRuleType).toBeUndefined();
       expect(result.data.body.completionRuleType).toBe('MANUAL');
       expect(result.data.body.isMandatory).toBe(true);
     }

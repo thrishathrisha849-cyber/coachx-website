@@ -15,6 +15,9 @@ import { findQuizByLessonId } from './quiz.repository';
 import { findAssignmentByLessonId } from './assignment.repository';
 import { toPublicLessonDetail } from './lesson.serializers';
 import { evaluateCertificateEligibility, generateCertificateForEnrollment, listMyCertificates, getMyCertificateById } from './certificate.service';
+import { getRecommendationsForLearner } from './recommendation.service';
+import { getMemberCatalog } from './catalog.service';
+import { recordLearningEvent } from './learning-event.service';
 
 /**
  * Phase 6 Part 2B — learner-facing `/me/*` API (004 US1–US2, FR-020's
@@ -71,6 +74,12 @@ export const getMyLesson = asyncHandler(async (req: Request, res: Response) => {
   const access = await evaluateLessonAccess(req.user!.id, module_.courseId, lesson.id);
   if (!access.allowed) {
     throw new AppError(access.message, HttpStatus.FORBIDDEN, ERROR_CODES.FORBIDDEN, { reason: access.reason, ...access.detail });
+  }
+
+  // FR-109 LESSON_VIEWED — only once access is confirmed allowed (a denied
+  // view attempt is not a real "viewed" event).
+  if (!access.viaPreview) {
+    await recordLearningEvent({ eventType: 'LESSON_VIEWED', userId: req.user!.id, courseId: module_.courseId, lessonId: lesson.id });
   }
 
   const activities = await findActivitiesByLesson(lesson.id);
@@ -135,4 +144,18 @@ export const getMyCertificateEligibility = asyncHandler(async (req: Request, res
 export const postMyCertificate = asyncHandler(async (req: Request, res: Response) => {
   const certificate = await generateCertificateForEnrollment(req.user!.id, req.params.courseId);
   res.status(201).json(buildSuccessResponse(certificate));
+});
+
+// --- Discovery & Recommendations (004, FR-088/FR-090) -----------------------
+
+/** GET /me/recommendations — the deterministic recommendation engine's own direct endpoint (also feeds the dashboard's "recommendations" widget). */
+export const getMyRecommendations = asyncHandler(async (req: Request, res: Response) => {
+  const result = await getRecommendationsForLearner(req.user!.id);
+  res.status(200).json(buildSuccessResponse(result));
+});
+
+/** GET /me/catalog — the sectioned member catalog view (FR-090). */
+export const getMyCatalog = asyncHandler(async (req: Request, res: Response) => {
+  const catalog = await getMemberCatalog(req.user!.id);
+  res.status(200).json(buildSuccessResponse(catalog));
 });

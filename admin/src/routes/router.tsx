@@ -17,6 +17,14 @@ import { SubmissionsListPage } from '@/pages/SubmissionsListPage';
 import { SubmissionReviewPage } from '@/pages/SubmissionReviewPage';
 import { CertificateTemplatesPage } from '@/pages/CertificateTemplatesPage';
 import { CourseCertificatesPage } from '@/pages/CourseCertificatesPage';
+import { LmsCategoriesPage } from '@/pages/LmsCategoriesPage';
+import { LmsCoursesPage } from '@/pages/LmsCoursesPage';
+import { CourseEditorPage } from '@/pages/CourseEditorPage';
+import { ModuleEditorPage } from '@/pages/ModuleEditorPage';
+import { LessonEditorPage } from '@/pages/LessonEditorPage';
+import { CourseEnrollmentsPage } from '@/pages/CourseEnrollmentsPage';
+import { CourseAnalyticsPage } from '@/pages/CourseAnalyticsPage';
+import { CourseReviewsPage } from '@/pages/CourseReviewsPage';
 
 /**
  * Admin route table. 001 FR-023: every module route below is
@@ -48,6 +56,14 @@ export const router = createBrowserRouter([
           { path: 'submissions/:submissionId/review', element: <SubmissionReviewPage /> },
           { path: 'certificate-templates', element: <CertificateTemplatesPage /> },
           { path: 'course-certificates', element: <CourseCertificatesPage /> },
+          { path: 'lms-categories', element: <LmsCategoriesPage /> },
+          { path: 'lms-courses', element: <LmsCoursesPage /> },
+          { path: 'lms-courses/:id', element: <CourseEditorPage /> },
+          { path: 'lms-courses/:id/enrollments', element: <CourseEnrollmentsPage /> },
+          { path: 'lms-courses/:id/analytics', element: <CourseAnalyticsPage /> },
+          { path: 'lms-modules/:moduleId', element: <ModuleEditorPage /> },
+          { path: 'lms-lessons/:lessonId', element: <LessonEditorPage /> },
+          { path: 'course-reviews', element: <CourseReviewsPage /> },
           { path: '*', element: <NotFound /> },
         ],
       },

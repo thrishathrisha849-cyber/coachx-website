@@ -45,6 +45,18 @@ export interface ProgressAndMilestones {
   milestones: MilestoneSummary[];
 }
 
+/** 004 Discovery & Recommendations batch (FR-088) — a deterministic, real-signal recommendation (no AI wrapper exists in this codebase yet; see backend's recommendation.service.ts). */
+export interface RecommendationItem {
+  type: 'NEXT_COURSE' | 'REVISION_LESSON' | 'PRACTICE_QUIZ';
+  courseId: string;
+  courseTitle: string;
+  courseSlug: string;
+  lessonId?: string;
+  lessonTitle?: string;
+  quizId?: string;
+  reason: string;
+}
+
 export interface DashboardResponse {
   isNewUser: boolean;
   widgets: {
@@ -54,7 +66,7 @@ export interface DashboardResponse {
     upcomingLiveSession: DashboardWidget<null>;
     currentChallenge: DashboardWidget<null>;
     progressAndMilestones: DashboardWidget<ProgressAndMilestones>;
-    recommendations: DashboardWidget<null>;
+    recommendations: DashboardWidget<RecommendationItem[]>;
     communityHighlights: DashboardWidget<null>;
     savedItems: DashboardWidget<null>;
     membership: DashboardWidget<null>;

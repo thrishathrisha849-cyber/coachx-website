@@ -34,6 +34,10 @@ function CreateAssignmentForm({ lessonId, onCreated }: { lessonId: string; onCre
   const [passingScore, setPassingScore] = useState(70);
   const [latePolicy, setLatePolicy] = useState('ACCEPT');
   const [dueAt, setDueAt] = useState('');
+  const [peerReviewEnabled, setPeerReviewEnabled] = useState(false);
+  const [peerReviewsRequired, setPeerReviewsRequired] = useState(2);
+  const [peerReviewAnonymous, setPeerReviewAnonymous] = useState(true);
+  const [peerReviewIncludeInGrade, setPeerReviewIncludeInGrade] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -50,6 +54,10 @@ function CreateAssignmentForm({ lessonId, onCreated }: { lessonId: string; onCre
         passingScore,
         latePolicy,
         maxAttempts: null,
+        peerReviewEnabled,
+        peerReviewsRequired: peerReviewEnabled ? peerReviewsRequired : 0,
+        peerReviewAnonymous,
+        peerReviewIncludeInGrade,
       });
       onCreated(assignment.id);
     } catch (err) {
@@ -97,6 +105,36 @@ function CreateAssignmentForm({ lessonId, onCreated }: { lessonId: string; onCre
           Due date (optional)
           <input type="datetime-local" value={dueAt} onChange={(e) => setDueAt(e.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-900" />
         </label>
+
+        <div className="rounded-md border border-dashed border-slate-300 p-3 dark:border-slate-700">
+          <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200">
+            <input type="checkbox" checked={peerReviewEnabled} onChange={(e) => setPeerReviewEnabled(e.target.checked)} />
+            Enable peer review (FR-076)
+          </label>
+          {peerReviewEnabled && (
+            <div className="mt-3 flex flex-col gap-3">
+              <label className="text-sm">
+                Reviews required per submission
+                <input
+                  type="number"
+                  min={1}
+                  value={peerReviewsRequired}
+                  onChange={(e) => setPeerReviewsRequired(Number(e.target.value))}
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-900"
+                />
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={peerReviewAnonymous} onChange={(e) => setPeerReviewAnonymous(e.target.checked)} />
+                Anonymous to the submitter
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={peerReviewIncludeInGrade} onChange={(e) => setPeerReviewIncludeInGrade(e.target.checked)} />
+                Surface peer score to the instructor as informing the grade
+              </label>
+            </div>
+          )}
+        </div>
+
         {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
         <button onClick={handleSubmit} disabled={submitting || !title} className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-60">
           {submitting ? 'Creating…' : 'Create assignment'}
@@ -144,6 +182,11 @@ function AssignmentManager({ assignmentId }: { assignmentId: string }) {
       <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
         {assignment.submissionFormat} · Max {assignment.maxScore} pts, passing {assignment.passingScore} · Late policy: {assignment.latePolicy}
         {assignment.dueAt && ` · Due ${new Date(assignment.dueAt).toLocaleString()}`}
+      </p>
+      <p className="mt-1 text-xs text-slate-400">
+        {assignment.peerReviewEnabled
+          ? `Peer review: ${assignment.peerReviewsRequired} required, ${assignment.peerReviewAnonymous ? 'anonymous' : 'identity visible'}${assignment.peerReviewIncludeInGrade ? ', informs grade' : ''}`
+          : 'Peer review: disabled'}
       </p>
 
       <div className="mt-3 flex gap-2">

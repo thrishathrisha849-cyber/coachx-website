@@ -13,6 +13,8 @@ export interface PublicAssignment {
   maxScore: number;
   passingScore: number;
   maxAttempts: number | null;
+  peerReviewEnabled: boolean;
+  peerReviewsRequired: number;
 }
 
 export interface SubmissionResult {
@@ -65,5 +67,69 @@ export async function saveDraft(submissionId: string, body: { textBody?: string;
 
 export async function submitSubmission(submissionId: string): Promise<SubmissionResult> {
   const { data } = await apiClient.post<ApiSuccessResponse<SubmissionResult>>(`/lms/me/submissions/${submissionId}/submit`);
+  return data.data;
+}
+
+// ============================================================================
+// Peer Review (004 US9 batch, FR-076)
+// ============================================================================
+
+export interface PeerReviewQueueItem {
+  submissionId: string;
+  assignmentId: string;
+  assignmentTitle: string;
+  courseId: string;
+  courseTitle: string;
+  lessonId: string;
+  submittedAt: string | null;
+  textBody: string | null;
+  linkUrl: string | null;
+  criteria: { id: string; title: string; description: string | null; maxPoints: number }[];
+  slotsRemaining: number;
+}
+
+export interface PeerReviewCriterionScoreInput {
+  criterionId: string;
+  pointsAwarded: number;
+  comment?: string;
+}
+
+export interface PeerReviewResult {
+  id: string;
+  submissionId: string;
+  status: 'PENDING' | 'SUBMITTED' | 'EXCUSED';
+  comment: string | null;
+  totalScore: number | null;
+  claimedAt: string;
+  submittedAt: string | null;
+  criterionScores: CriterionScoreResult[];
+}
+
+export interface PeerReviewForSubmitter {
+  id: string;
+  reviewerDisplayName: string | null;
+  comment: string | null;
+  totalScore: number | null;
+  submittedAt: string | null;
+  criterionScores: CriterionScoreResult[];
+}
+
+export async function getPeerReviewQueue(): Promise<PeerReviewQueueItem[]> {
+  const { data } = await apiClient.get<ApiSuccessResponse<PeerReviewQueueItem[]>>('/lms/me/peer-review-queue');
+  return data.data;
+}
+
+export async function claimPeerReview(submissionId: string): Promise<PeerReviewResult> {
+  const { data } = await apiClient.post<ApiSuccessResponse<PeerReviewResult>>(`/lms/me/submissions/${submissionId}/peer-review`);
+  return data.data;
+}
+
+export async function submitPeerReview(peerReviewId: string, body: { criterionScores: PeerReviewCriterionScoreInput[]; comment?: string }): Promise<PeerReviewResult> {
+  const { data } = await apiClient.post<ApiSuccessResponse<PeerReviewResult>>(`/lms/me/peer-reviews/${peerReviewId}/submit`, body);
+  return data.data;
+}
+
+export async function getMyPeerReviewsReceived(submissionId: string): Promise<PeerReviewForSubmitter[]> {
+  const { data } = await apiClient.get<ApiSuccessResponse<PeerReviewForSubmitter[]>>(`/lms/me/submissions/${submissionId}/peer-reviews`);
   return data.data;
 }

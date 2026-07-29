@@ -31,6 +31,12 @@ export interface PublicCourseFilter {
   instructorId?: string;
   featured?: boolean;
   priceType?: string;
+  /// 004 Discovery & Recommendations batch (FR-089 "certificate" filter).
+  certificateAvailable?: boolean;
+  /// FR-089 "duration" filter — courses at or under this length.
+  maxDurationMinutes?: number;
+  /// FR-089 "format" filter — courses containing at least one activity of this type.
+  format?: string;
 }
 
 // NOTE: every conditional clause below is combined via a single top-level
@@ -63,12 +69,22 @@ function publicCourseWhere(filter: PublicCourseFilter): Prisma.CourseWhereInput 
   if (filter.featured !== undefined) and.push({ isFeatured: filter.featured });
   if (filter.priceType) and.push({ priceType: filter.priceType as never });
   if (filter.instructorId) and.push({ instructors: { some: { userId: filter.instructorId } } });
+  if (filter.certificateAvailable !== undefined) and.push({ certificateAvailable: filter.certificateAvailable });
+  if (filter.maxDurationMinutes !== undefined) and.push({ durationMinutes: { lte: filter.maxDurationMinutes } });
+  if (filter.format) and.push({ modules: { some: { lessons: { some: { activities: { some: { type: filter.format as never, deletedAt: null } } } } } } });
   if (filter.q) {
+    // FR-089 "learning search across courses... instructors... lessons" —
+    // beyond the course's own title/subtitle/description, a query also
+    // matches the primary instructor's display name and any lesson title
+    // within the course, so a search for a well-known instructor or a
+    // specific lesson topic surfaces the containing course.
     and.push({
       OR: [
         { title: { contains: filter.q, mode: 'insensitive' } },
         { subtitle: { contains: filter.q, mode: 'insensitive' } },
         { shortDescription: { contains: filter.q, mode: 'insensitive' } },
+        { instructors: { some: { user: { profile: { displayName: { contains: filter.q, mode: 'insensitive' } } } } } },
+        { modules: { some: { lessons: { some: { status: 'PUBLISHED', deletedAt: null, title: { contains: filter.q, mode: 'insensitive' } } } } } },
       ],
     });
   }
@@ -80,6 +96,8 @@ const COURSE_SORT_ORDER_BY: Record<string, Prisma.CourseOrderByWithRelationInput
   newest: [{ publishedAt: 'desc' }, { id: 'asc' }],
   title: [{ title: 'asc' }, { id: 'asc' }],
   featured: [{ isFeatured: 'desc' }, { publishedAt: 'desc' }, { id: 'asc' }],
+  /// 004 Discovery & Recommendations batch (FR-090 "popular" catalog section / FR-089 sort).
+  popular: [{ learnerCount: 'desc' }, { publishedAt: 'desc' }, { id: 'asc' }],
 };
 
 export function findPublicCourses(

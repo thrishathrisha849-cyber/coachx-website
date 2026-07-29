@@ -18,6 +18,7 @@ import {
   updateTemplate as updateTemplateRow,
 } from './certificate.repository';
 import { toPublicCertificate, toAdminCertificateTemplate } from './certificate.serializers';
+import { recordLearningEvent } from './learning-event.service';
 import type { AdminCertificateTemplate, CertificateEligibility, EligibilityCondition, PublicCertificate } from './certificate.types';
 
 const CREDENTIAL_CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I — avoids visual ambiguity on a printed/shared credential
@@ -145,6 +146,10 @@ export async function generateCertificateForEnrollment(userId: string, courseId:
         resourceId: created.id,
         afterState: { courseId, credentialId },
       },
+      tx,
+    );
+    await recordLearningEvent(
+      { eventType: 'CERTIFICATE_ISSUED', userId, courseId, enrollmentId: enrollment.id, metadata: { credentialId } },
       tx,
     );
 

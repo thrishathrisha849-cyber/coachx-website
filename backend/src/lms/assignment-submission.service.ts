@@ -6,11 +6,11 @@ import { scopedIdempotencyKey } from './lms-idempotency.util';
 import { findLessonById } from './lesson.repository';
 import { findModuleById } from './module.repository';
 import { evaluateLessonAccess } from './access-evaluator.service';
-import { findEnrollmentForUserAndCourse } from './enrollment.repository';
+import { findEnrollmentForUserAndCourse, findEnrollmentById } from './enrollment.repository';
 import { maybeAutoCompleteFromAssignmentApproval } from './completion.service';
+import { recordLearningEvent } from './learning-event.service';
 import {
   findAssignmentById,
-  findRubricCriteriaByAssignment,
   findRubricCriterionByIdIncludingDeleted,
   findSubmissionsForEnrollmentAssignment,
   findSubmissionById,
@@ -19,12 +19,16 @@ import {
   findSubmissionsForAssignmentAdmin,
   upsertCriterionScore,
 } from './assignment.repository';
+import { buildCriteriaLookup } from './assignment.service';
+import { getPeerReviewsForInstructor } from './peer-review.service';
 import { toSubmissionResult, toSubmissionWithScores, toAdminSubmissionSummary } from './assignment.serializers';
 import type { AdminSubmissionSummary, CriterionScoreInput, SubmissionResult, SubmissionWithScores } from './assignment.types';
+import type { PeerReviewForInstructor } from './peer-review.types';
 
 interface ResolvedAssignmentContext {
   assignment: NonNullable<Awaited<ReturnType<typeof findAssignmentById>>>;
   enrollmentId: string;
+  courseId: string;
 }
 
 /** Resolves + access-checks an assignment via its lesson, exactly like every other content path (`evaluateLessonAccess`) — never a bespoke check. */
@@ -44,7 +48,7 @@ async function resolveAssignmentContext(userId: string, assignmentId: string): P
   const enrollment = await findEnrollmentForUserAndCourse(userId, module_.courseId);
   if (!enrollment) throw AppError.notFound('Enrollment not found');
 
-  return { assignment, enrollmentId: enrollment.id };
+  return { assignment, enrollmentId: enrollment.id, courseId: module_.courseId };
 }
 
 async function assertOwnSubmission(userId: string, submissionId: string) {
@@ -61,7 +65,7 @@ async function assertOwnSubmission(userId: string, submissionId: string) {
   const enrollment = await findEnrollmentForUserAndCourse(userId, module_.courseId);
   if (!enrollment || enrollment.id !== submission.enrollmentId) throw AppError.notFound('Submission not found');
 
-  return { submission, assignment };
+  return { submission, assignment, courseId: module_.courseId };
 }
 
 /**
@@ -73,7 +77,7 @@ async function assertOwnSubmission(userId: string, submissionId: string) {
  * resubmission" (FR-072 acceptance scenario 2) true by construction.
  */
 export async function startOrResumeSubmission(userId: string, assignmentId: string): Promise<SubmissionResult> {
-  const { assignment, enrollmentId } = await resolveAssignmentContext(userId, assignmentId);
+  const { assignment, enrollmentId, courseId } = await resolveAssignmentContext(userId, assignmentId);
 
   const history = await findSubmissionsForEnrollmentAssignment(enrollmentId, assignmentId);
   const latest = history[0];
@@ -107,6 +111,14 @@ export async function startOrResumeSubmission(userId: string, assignmentId: stri
     resourceId: created.id,
     metadata: { assignmentId, attemptNumber: created.attemptNumber },
   });
+  await recordLearningEvent({
+    eventType: 'ASSIGNMENT_STARTED',
+    userId,
+    courseId,
+    lessonId: assignment.lessonId,
+    enrollmentId,
+    metadata: { assignmentId, attemptNumber: created.attemptNumber },
+  });
 
   return toSubmissionResult(created);
 }
@@ -133,7 +145,7 @@ export async function saveDraft(userId: string, submissionId: string, input: { t
  * submission is accepted at all.
  */
 export async function submitSubmission(userId: string, submissionId: string, idempotencyKey?: string): Promise<SubmissionResult> {
-  const { submission, assignment } = await assertOwnSubmission(userId, submissionId);
+  const { submission, assignment, courseId } = await assertOwnSubmission(userId, submissionId);
 
   const key = scopedIdempotencyKey(userId, idempotencyKey, submissionId);
   const outcome = await beginIdempotentOperation<SubmissionResult>('lms.submission.submit', key, { submissionId });
@@ -168,6 +180,17 @@ export async function submitSubmission(userId: string, submissionId: string, ide
         { actorType: 'USER', actorId: userId, action: 'lms.submission.submitted', resourceType: 'submission', resourceId: submissionId, afterState: { isLate } },
         tx,
       );
+      await recordLearningEvent(
+        {
+          eventType: 'ASSIGNMENT_SUBMITTED',
+          userId,
+          courseId,
+          lessonId: assignment.lessonId,
+          enrollmentId: submission.enrollmentId,
+          metadata: { submissionId, isLate },
+        },
+        tx,
+      );
       return result;
     });
 
@@ -186,34 +209,6 @@ export async function getMySubmissionHistory(userId: string, assignmentId: strin
   return history.map(toSubmissionResult);
 }
 
-/**
- * Builds the criterion lookup map for review-display purposes. NOT just
- * `findRubricCriteriaByAssignment` — that excludes soft-deleted (archived)
- * criteria unconditionally, so a criterion archived after already being
- * scored on a submission would otherwise resolve as "Removed criterion"
- * (this exact bug was caught by this batch's own integration test). Every
- * criterion actually referenced by one of the submission's recorded
- * scores is resolved via `findRubricCriterionByIdIncludingDeleted`
- * instead, the same union-based fix `quiz-attempt.service.ts`'s grading
- * uses for archived Questions.
- */
-async function buildCriteriaLookup(
-  assignmentId: string,
-  scores: { criterionId: string }[],
-): Promise<Map<string, { title: string; maxPoints: number }>> {
-  const activeCriteria = await findRubricCriteriaByAssignment(assignmentId);
-  const criteriaById = new Map(activeCriteria.map((c) => [c.id, { title: c.title, maxPoints: c.maxPoints }]));
-
-  for (const { criterionId } of scores) {
-    if (!criteriaById.has(criterionId)) {
-      const criterion = await findRubricCriterionByIdIncludingDeleted(criterionId);
-      if (criterion) criteriaById.set(criterionId, { title: criterion.title, maxPoints: criterion.maxPoints });
-    }
-  }
-
-  return criteriaById;
-}
-
 export async function getMySubmissionWithScores(userId: string, submissionId: string): Promise<SubmissionWithScores> {
   const { submission, assignment } = await assertOwnSubmission(userId, submissionId);
   const criteriaById = await buildCriteriaLookup(assignment.id, submission.criterionScores);
@@ -230,7 +225,9 @@ export async function listSubmissionsForAssignmentAdmin(assignmentId: string, st
   return rows.map((r) => toAdminSubmissionSummary(r as never));
 }
 
-export async function getSubmissionAdmin(submissionId: string): Promise<SubmissionWithScores & { learnerUserId: string }> {
+export async function getSubmissionAdmin(
+  submissionId: string,
+): Promise<SubmissionWithScores & { learnerUserId: string; peerReviews: PeerReviewForInstructor[] }> {
   const submission = await findSubmissionById(submissionId);
   if (!submission) throw AppError.notFound('Submission not found');
 
@@ -243,7 +240,14 @@ export async function getSubmissionAdmin(submissionId: string): Promise<Submissi
   if (!prisma) throw AppError.internal('Database is not connected');
   const enrollment = await prisma.enrollment.findUnique({ where: { id: submission.enrollmentId } });
 
-  return { ...toSubmissionWithScores(submission, submission.criterionScores, criteriaById), learnerUserId: enrollment?.userId ?? '' };
+  // FR-076 acceptance scenario 3 — "the instructor sees both peer scores/
+  // comments alongside their own review screen." Peer reviews are
+  // ALWAYS surfaced with reviewer identity here (never anonymized to
+  // staff) regardless of `Assignment.peerReviewAnonymous`, which only
+  // governs the SUBMITTER's own view (`getPeerReviewsForSubmitter`).
+  const peerReviews = await getPeerReviewsForInstructor(submissionId);
+
+  return { ...toSubmissionWithScores(submission, submission.criterionScores, criteriaById), learnerUserId: enrollment?.userId ?? '', peerReviews };
 }
 
 export interface ReviewInput {
@@ -314,6 +318,25 @@ export async function reviewSubmission(submissionId: string, input: ReviewInput,
       { actorType: 'USER', actorId, action: 'lms.submission.reviewed', resourceType: 'submission', resourceId: submissionId, afterState: { decision: input.decision, score } },
       tx,
     );
+
+    // FR-109 — reviewer (actorId) is an instructor/admin, never the learner
+    // this event is attributed to; the owning enrollment's own userId is
+    // fetched fresh, same pattern as quiz grading's ASSIGNMENT_REVIEWED
+    // sibling events.
+    const owningEnrollment = await findEnrollmentById(submission.enrollmentId, tx);
+    if (owningEnrollment) {
+      await recordLearningEvent(
+        {
+          eventType: 'ASSIGNMENT_REVIEWED',
+          userId: owningEnrollment.userId,
+          courseId: owningEnrollment.courseId,
+          lessonId: assignment.lessonId,
+          enrollmentId: submission.enrollmentId,
+          metadata: { submissionId, decision: input.decision, score },
+        },
+        tx,
+      );
+    }
 
     return result;
   });

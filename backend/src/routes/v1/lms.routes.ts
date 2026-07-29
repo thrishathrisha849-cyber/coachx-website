@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { validate } from '../../middlewares/validate.middleware';
-import { authenticate } from '../../middlewares/authenticate.middleware';
+import { authenticate, authenticateOptional } from '../../middlewares/authenticate.middleware';
 import { requirePermission } from '../../middlewares/authorize.middleware';
 import { cacheControl } from '../../cms/cache-control.middleware';
 import {
@@ -70,6 +70,7 @@ import {
   postCourseStatus,
   postArchiveCourse,
   postRestoreCourse,
+  postCloneCourse,
   postInstructor,
   getCourseInstructors,
   deleteInstructor,
@@ -103,6 +104,12 @@ import {
   postExtendEnrollmentAccess,
   postOverrideComplete,
   postResetProgress,
+  getEnrollmentAnalyticsAdmin,
+  getEnrollmentAtRiskAdmin,
+  getCourseAnalyticsAdmin,
+  getCourseAtRiskLearnersAdmin,
+  getLessonAnalyticsAdmin,
+  getCourseLessonAnalyticsAdmin,
 } from '../../lms/admin-lms.controller';
 import {
   getMyInstructorCourses,
@@ -139,6 +146,8 @@ import {
   getMyCertificateDetail,
   getMyCertificateEligibility,
   postMyCertificate,
+  getMyRecommendations,
+  getMyCatalog,
 } from '../../lms/student-lms.controller';
 import {
   assignCourseToOrgMembersSchema,
@@ -194,6 +203,8 @@ import {
   saveDraftSchema,
   reviewSubmissionSchema,
   listSubmissionsQuerySchema,
+  submitPeerReviewSchema,
+  moderatePeerReviewSchema,
 } from '../../lms/assignment.validation';
 import {
   postAssignment,
@@ -215,7 +226,28 @@ import {
   getSubmissionByIdAdmin,
   postReviewSubmission,
 } from '../../lms/assignment-submission.controller';
+import {
+  getMyPeerReviewQueue,
+  postClaimPeerReview,
+  postSubmitPeerReview,
+  getMyPeerReviewsReceived,
+  postModeratePeerReview,
+} from '../../lms/peer-review.controller';
 import { createTemplateSchema, updateTemplateSchema, mapCourseTemplateSchema, revokeCertificateSchema, credentialIdParamSchema, certificateIdParamSchema, courseIdParamSchema as certificateCourseIdParamSchema } from '../../lms/certificate.validation';
+import { cloneCourseSchema } from '../../lms/course-clone.validation';
+import {
+  courseIdParamSchema as reviewCourseIdParamSchema,
+  submitReviewSchema,
+  moderateReviewSchema,
+} from '../../lms/course-review.validation';
+import {
+  getCourseReviews,
+  getMyCourseReview,
+  getMyReviewEligibility,
+  postMyCourseReview,
+  getCourseReviewsAdmin,
+  postModerateReview,
+} from '../../lms/course-review.controller';
 import {
   getTemplatesAdmin,
   postTemplate,
@@ -247,10 +279,15 @@ const router = Router();
 // --- Public reads -----------------------------------------------------
 router.get('/categories', cacheControl, validate(publicCategoryQuerySchema), getPublicCategories);
 router.get('/courses', cacheControl, validate(publicCourseQuerySchema), getPublicCourses);
-router.get('/courses/:slug', cacheControl, validate(courseSlugParamSchema), getPublicCourseDetail);
+// FR-109 COURSE_VIEWED — authenticateOptional so an anonymous browse still
+// 200s (this endpoint has never required auth), but the event only fires
+// for a resolvable logged-in viewer; never fabricates an anonymous row.
+router.get('/courses/:slug', cacheControl, authenticateOptional, validate(courseSlugParamSchema), getPublicCourseDetail);
 router.get('/courses/:slug/modules', cacheControl, validate(publicCourseModulesParamSchema), getPublicCourseModules);
 // FR-085 public verification — no auth, no permission check; deliberately open (that's the point of a verifiable credential).
 router.get('/certificates/verify/:credentialId', cacheControl, validate(credentialIdParamSchema), getPublicCertificateVerification);
+// 004 Discovery & Recommendations batch (FR-087) — public review list, no auth required (same visibility tier as the course detail page itself).
+router.get('/courses/:courseId/reviews', cacheControl, validate(reviewCourseIdParamSchema), getCourseReviews);
 
 // --- Admin: categories ---------------------------------------------------
 const adminCategoryPermission = requirePermission('course.category.manage');
@@ -273,6 +310,8 @@ router.patch('/admin/courses/:id', authenticate, requirePermission('course.updat
 router.post('/admin/courses/:id/status', authenticate, requirePermission('course.update'), validate(changeCourseStatusSchema), postCourseStatus);
 router.post('/admin/courses/:id/archive', authenticate, requirePermission('course.archive'), validate(courseIdParamSchema), postArchiveCourse);
 router.post('/admin/courses/:id/restore', authenticate, requirePermission('course.archive'), validate(courseIdParamSchema), postRestoreCourse);
+// 004 US8 — cloning creates a brand-new course, so it reuses `course.create` (the same permission that gates authoring a course from scratch), not `course.update`.
+router.post('/admin/courses/:id/clone', authenticate, requirePermission('course.create'), validate(cloneCourseSchema), postCloneCourse);
 
 // --- Admin: instructor assignment -----------------------------------------
 const manageInstructors = requirePermission('course.manageInstructors');
@@ -347,6 +386,11 @@ router.get('/admin/assignments/:assignmentId/submissions', authenticate, manageM
 router.get('/admin/submissions/:submissionId', authenticate, manageModules, validate(submissionIdParamSchema), getSubmissionByIdAdmin);
 router.post('/admin/submissions/:submissionId/review', authenticate, manageModules, validate(reviewSubmissionSchema), postReviewSubmission);
 
+// --- Admin: peer review moderation (004 US9 Peer Review batch, FR-076) -----
+// Reuses `course.manageInstructors` — same tier as `CourseReview` moderation
+// (HIDE/RESTORE, never a delete).
+router.post('/admin/peer-reviews/:peerReviewId/moderate', authenticate, manageInstructors, validate(moderatePeerReviewSchema), postModeratePeerReview);
+
 // --- Admin: certificate templates + certificates (004 US5 Certificate System batch) -
 // Template CRUD reuses `course.module.manage` (same authoring tier as
 // quiz/assignment content); revocation reuses `course.manageInstructors`
@@ -357,6 +401,12 @@ router.patch('/admin/certificate-templates/:templateId', authenticate, manageMod
 router.post('/admin/courses/:courseId/certificate-template', authenticate, manageModules, validate(mapCourseTemplateSchema), postCourseTemplateMapping);
 router.get('/admin/courses/:courseId/certificates', authenticate, requirePermission('course.view'), validate(certificateCourseIdParamSchema), getCertificatesForCourseAdmin);
 router.post('/admin/certificates/:certificateId/revoke', authenticate, manageInstructors, validate(revokeCertificateSchema), postRevokeCertificate);
+
+// --- Admin: course review moderation (004 Discovery & Recommendations batch, FR-087) -
+// Reuses `course.manageInstructors` — same tier as certificate revocation
+// and enrollment lifecycle actions, never a raw delete (see course-review.service.ts).
+router.get('/admin/courses/:courseId/reviews', authenticate, requirePermission('course.view'), validate(reviewCourseIdParamSchema), getCourseReviewsAdmin);
+router.post('/admin/reviews/:reviewId/moderate', authenticate, manageInstructors, validate(moderateReviewSchema), postModerateReview);
 
 // --- Admin: enrollments (Phase 6 Part 2B, FR-112) --------------------------
 // Enrollment grant/lifecycle actions reuse `course.manageInstructors` —
@@ -373,6 +423,18 @@ router.post('/admin/enrollments/:id/revoke', authenticate, manageInstructors, va
 router.post('/admin/enrollments/:id/extend-access', authenticate, manageInstructors, validate(extendAccessSchema), postExtendEnrollmentAccess);
 router.post('/admin/enrollments/:id/complete', authenticate, manageInstructors, validate(overrideCompleteSchema), postOverrideComplete);
 router.post('/admin/enrollments/:id/reset-progress', authenticate, manageInstructors, validate(resetProgressSchema), postResetProgress);
+
+// --- Admin: Learning Analytics & At-Risk Detection (004 FR-105–FR-108) -----
+// Read-only analytics reuse `course.view` — the same baseline every other
+// admin analytics/read endpoint above already uses, never a new
+// permission invented for a read-only aggregate.
+const analyticsView = requirePermission('course.view');
+router.get('/admin/enrollments/:id/analytics', authenticate, analyticsView, validate(enrollmentIdParamSchema), getEnrollmentAnalyticsAdmin);
+router.get('/admin/enrollments/:id/at-risk', authenticate, analyticsView, validate(enrollmentIdParamSchema), getEnrollmentAtRiskAdmin);
+router.get('/admin/courses/:id/analytics', authenticate, analyticsView, validate(courseIdParamSchema), getCourseAnalyticsAdmin);
+router.get('/admin/courses/:id/at-risk-learners', authenticate, analyticsView, validate(courseIdParamSchema), getCourseAtRiskLearnersAdmin);
+router.get('/admin/lessons/:lessonId/analytics', authenticate, analyticsView, validate(lessonIdParamSchema), getLessonAnalyticsAdmin);
+router.get('/admin/courses/:id/lessons/analytics', authenticate, analyticsView, validate(courseIdParamSchema), getCourseLessonAnalyticsAdmin);
 
 // --- Instructor-scoped ---------------------------------------------------
 // course.update / course.module.manage are the permissions `course_instructor`
@@ -438,11 +500,24 @@ router.get('/me/submissions/:submissionId', authenticate, meBaseline, validate(s
 router.patch('/me/submissions/:submissionId', authenticate, meBaseline, validate(saveDraftSchema), patchMySubmission);
 router.post('/me/submissions/:submissionId/submit', authenticate, meBaseline, validate(submissionIdParamSchema), postSubmitSubmission);
 
+// --- Student-facing peer review (004 US9 Peer Review batch, FR-076) --------
+router.get('/me/peer-review-queue', authenticate, meBaseline, getMyPeerReviewQueue);
+router.post('/me/submissions/:submissionId/peer-review', authenticate, meBaseline, validate(submissionIdParamSchema), postClaimPeerReview);
+router.post('/me/peer-reviews/:peerReviewId/submit', authenticate, meBaseline, validate(submitPeerReviewSchema), postSubmitPeerReview);
+router.get('/me/submissions/:submissionId/peer-reviews', authenticate, meBaseline, validate(submissionIdParamSchema), getMyPeerReviewsReceived);
+
 // --- Student-facing certificates (004 US5 Certificate System batch) -------
 router.get('/me/certificates', authenticate, meBaseline, getMyCertificates);
 router.get('/me/certificates/:certificateId', authenticate, meBaseline, validate(certificateIdParamSchema), getMyCertificateDetail);
 router.get('/me/courses/:courseId/certificate-eligibility', authenticate, meBaseline, validate(certificateCourseIdParamSchema), getMyCertificateEligibility);
 router.post('/me/courses/:courseId/certificate', authenticate, meBaseline, validate(certificateCourseIdParamSchema), postMyCertificate);
+
+// --- Student-facing reviews, recommendations, catalog (004 Discovery & Recommendations batch) -
+router.get('/me/courses/:courseId/review', authenticate, meBaseline, validate(reviewCourseIdParamSchema), getMyCourseReview);
+router.get('/me/courses/:courseId/review-eligibility', authenticate, meBaseline, validate(reviewCourseIdParamSchema), getMyReviewEligibility);
+router.post('/me/courses/:courseId/review', authenticate, meBaseline, validate(submitReviewSchema), postMyCourseReview);
+router.get('/me/recommendations', authenticate, meBaseline, getMyRecommendations);
+router.get('/me/catalog', authenticate, meBaseline, getMyCatalog);
 
 // --- Organization-admin course assignment (004 FR-033) --------------------
 // `organization.manage_own` — the SAME own-org-scoped permission

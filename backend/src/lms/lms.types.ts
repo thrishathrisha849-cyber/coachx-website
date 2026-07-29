@@ -143,4 +143,6 @@ export interface AdminCourse extends Omit<PublicCourse, 'category' | 'instructor
   createdAt: Date;
   archivedAt: Date | null;
   instructors: PublicCourseInstructor[];
+  /** 004 US6 polish batch (FR-034) — see schema.prisma's Course.sequencingMode doc comment. Admin-only; not exposed on PublicCourse. */
+  sequencingMode: string;
 }

@@ -60,6 +60,8 @@ export interface CourseInput {
   seoTitle?: string;
   seoDescription?: string;
   canonicalUrl?: string;
+  /** 004 US6 polish batch (FR-034) — see schema.prisma's Course.sequencingMode doc comment. */
+  sequencingMode?: string;
   metadata?: unknown;
 }
 
@@ -116,6 +118,7 @@ export async function createNewCourse(input: CourseInput, actorId: string): Prom
         seoTitle: input.seoTitle,
         seoDescription: input.seoDescription,
         canonicalUrl: input.canonicalUrl,
+        sequencingMode: (input.sequencingMode ?? 'FLEXIBLE') as never,
         metadata: input.metadata as never,
         createdBy: actorId,
         updatedBy: actorId,
@@ -191,6 +194,7 @@ export async function updateExistingCourse(
         ...(input.seoTitle !== undefined ? { seoTitle: input.seoTitle } : {}),
         ...(input.seoDescription !== undefined ? { seoDescription: input.seoDescription } : {}),
         ...(input.canonicalUrl !== undefined ? { canonicalUrl: input.canonicalUrl } : {}),
+        ...(input.sequencingMode !== undefined ? { sequencingMode: input.sequencingMode as never } : {}),
         ...(input.metadata !== undefined ? { metadata: input.metadata as never } : {}),
         version: { increment: 1 },
         updatedBy: actorId,

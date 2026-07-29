@@ -8,6 +8,7 @@ import {
   updateAssignment as updateAssignmentRow,
   findRubricCriteriaByAssignment,
   findRubricCriterionById,
+  findRubricCriterionByIdIncludingDeleted,
   createRubricCriterion as createRubricCriterionRow,
   updateRubricCriterion as updateRubricCriterionRow,
   countRubricCriteria,
@@ -30,6 +31,12 @@ export interface CreateAssignmentInput {
   passingScore: number;
   latePolicy: string;
   maxAttempts?: number | null;
+  /** FR-076 Peer Review config (004 US9 batch). */
+  peerReviewEnabled?: boolean;
+  peerReviewsRequired?: number;
+  peerReviewAnonymous?: boolean;
+  peerReviewDeadlineDays?: number | null;
+  peerReviewIncludeInGrade?: boolean;
 }
 
 export async function createAssignmentForLesson(lessonId: string, input: CreateAssignmentInput, actorId: string): Promise<AdminAssignment> {
@@ -51,6 +58,11 @@ export async function createAssignmentForLesson(lessonId: string, input: CreateA
     passingScore: input.passingScore,
     latePolicy: input.latePolicy as never,
     maxAttempts: input.maxAttempts ?? null,
+    peerReviewEnabled: input.peerReviewEnabled ?? false,
+    peerReviewsRequired: input.peerReviewsRequired ?? 0,
+    peerReviewAnonymous: input.peerReviewAnonymous ?? true,
+    peerReviewDeadlineDays: input.peerReviewDeadlineDays ?? null,
+    peerReviewIncludeInGrade: input.peerReviewIncludeInGrade ?? false,
     createdBy: actorId,
     updatedBy: actorId,
   });
@@ -95,6 +107,11 @@ export async function updateExistingAssignment(id: string, input: Partial<Create
     ...(input.passingScore !== undefined ? { passingScore: input.passingScore } : {}),
     ...(input.latePolicy !== undefined ? { latePolicy: input.latePolicy as never } : {}),
     ...(input.maxAttempts !== undefined ? { maxAttempts: input.maxAttempts } : {}),
+    ...(input.peerReviewEnabled !== undefined ? { peerReviewEnabled: input.peerReviewEnabled } : {}),
+    ...(input.peerReviewsRequired !== undefined ? { peerReviewsRequired: input.peerReviewsRequired } : {}),
+    ...(input.peerReviewAnonymous !== undefined ? { peerReviewAnonymous: input.peerReviewAnonymous } : {}),
+    ...(input.peerReviewDeadlineDays !== undefined ? { peerReviewDeadlineDays: input.peerReviewDeadlineDays } : {}),
+    ...(input.peerReviewIncludeInGrade !== undefined ? { peerReviewIncludeInGrade: input.peerReviewIncludeInGrade } : {}),
     version: { increment: 1 },
     updatedBy: actorId,
   });
@@ -200,6 +217,38 @@ export async function updateExistingCriterion(id: string, input: UpdateCriterion
   });
 
   return toAdminRubricCriterion(updated);
+}
+
+/**
+ * Builds the criterion lookup map for review-display purposes. NOT just
+ * `findRubricCriteriaByAssignment` — that excludes soft-deleted (archived)
+ * criteria unconditionally, so a criterion archived after already being
+ * scored would otherwise resolve as "Removed criterion" (this exact bug
+ * was caught by the Assignment System batch's own integration test).
+ * Every criterion actually referenced by one of the recorded scores is
+ * resolved via `findRubricCriterionByIdIncludingDeleted` instead, the
+ * same union-based fix `quiz-attempt.service.ts`'s grading uses for
+ * archived Questions. Lives here (not in `assignment-submission.service.ts`
+ * or `peer-review.service.ts`) so both can share it without either
+ * importing the other — `peer-review.service.ts` needs it too, and it
+ * needs `assignment-submission.service.ts`'s `getSubmissionAdmin` to
+ * surface peer reviews, which would otherwise be a circular import.
+ */
+export async function buildCriteriaLookup(
+  assignmentId: string,
+  scores: { criterionId: string }[],
+): Promise<Map<string, { title: string; maxPoints: number }>> {
+  const activeCriteria = await findRubricCriteriaByAssignment(assignmentId);
+  const criteriaById = new Map(activeCriteria.map((c) => [c.id, { title: c.title, maxPoints: c.maxPoints }]));
+
+  for (const { criterionId } of scores) {
+    if (!criteriaById.has(criterionId)) {
+      const criterion = await findRubricCriterionByIdIncludingDeleted(criterionId);
+      if (criterion) criteriaById.set(criterionId, { title: criterion.title, maxPoints: criterion.maxPoints });
+    }
+  }
+
+  return criteriaById;
 }
 
 /** Soft-delete only — preserves historical `SubmissionCriterionScore` interpretability. */

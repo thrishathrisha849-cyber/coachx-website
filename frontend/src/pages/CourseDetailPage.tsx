@@ -10,6 +10,13 @@ import { NotFound } from '@/components/system/NotFound';
 import { Breadcrumbs } from '@/components/layout/Breadcrumbs';
 import { formatCoursePrice } from '@/utils/money';
 import { sanitizeRichText } from '@/utils/sanitizeHtml';
+import {
+  getCourseReviews,
+  getMyReviewEligibility,
+  getMyCourseReview,
+  submitCourseReview,
+  type PublicCourseReview,
+} from '@/api/course-review.api';
 
 /**
  * Phase 6 Part 1 — public course detail. Renders title/description/
@@ -168,6 +175,8 @@ export function CourseDetailPage() {
               </ol>
             </section>
           )}
+
+          <CourseReviewsSection courseId={course.id} ratingAverage={course.ratingAverage} ratingCount={course.ratingCount} isAuthenticated={isAuthenticated} />
         </div>
 
         <aside className="rounded-lg border border-slate-200 p-5 dark:border-slate-800">
@@ -228,5 +237,111 @@ export function CourseDetailPage() {
         </aside>
       </div>
     </article>
+  );
+}
+
+/** 004 Discovery & Recommendations batch (FR-087) — public review list + rating aggregate, plus a submit form gated by the server's own eligibility check (never a client-side guess at "enrolled enough to review"). */
+function CourseReviewsSection({
+  courseId,
+  ratingAverage,
+  ratingCount,
+  isAuthenticated,
+}: {
+  courseId: string;
+  ratingAverage: number | null;
+  ratingCount: number;
+  isAuthenticated: boolean;
+}) {
+  const [reviews, setReviews] = useState<PublicCourseReview[]>([]);
+  const [eligible, setEligible] = useState<{ eligible: boolean; reason?: string } | null>(null);
+  const [rating, setRating] = useState(5);
+  const [comment, setComment] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [submitted, setSubmitted] = useState(false);
+
+  useEffect(() => {
+    getCourseReviews(courseId).then(setReviews).catch(() => undefined);
+    if (isAuthenticated) {
+      getMyReviewEligibility(courseId).then(setEligible).catch(() => undefined);
+      getMyCourseReview(courseId).then((existing) => {
+        if (existing) {
+          setRating(existing.rating);
+          setComment(existing.comment ?? '');
+          setSubmitted(true);
+        }
+      }).catch(() => undefined);
+    }
+  }, [courseId, isAuthenticated]);
+
+  async function handleSubmit() {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await submitCourseReview(courseId, { rating, comment: comment.trim() || undefined, wouldRecommend: rating >= 4, isAnonymous: false });
+      setSubmitted(true);
+      getCourseReviews(courseId).then(setReviews).catch(() => undefined);
+    } catch (err) {
+      setError((err as NormalizedApiError).message ?? 'Could not submit your review.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <section className="mt-8">
+      <h2 className="mb-3 text-xl font-bold text-slate-900 dark:text-white">
+        Reviews {ratingCount > 0 && <span className="text-base font-normal text-slate-500 dark:text-slate-400">({ratingAverage?.toFixed(1)} · {ratingCount} review{ratingCount === 1 ? '' : 's'})</span>}
+      </h2>
+
+      {isAuthenticated && eligible && (
+        eligible.eligible ? (
+          <div className="mb-6 rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+            <p className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">{submitted ? 'Update your review' : 'Write a review'}</p>
+            <div className="mb-2 flex gap-1">
+              {[1, 2, 3, 4, 5].map((n) => (
+                <button key={n} type="button" onClick={() => setRating(n)} aria-label={`Rate ${n} star${n === 1 ? '' : 's'}`} className={n <= rating ? 'text-amber-400' : 'text-slate-300 dark:text-slate-700'}>
+                  ★
+                </button>
+              ))}
+            </div>
+            <textarea
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              rows={3}
+              placeholder="Share your experience with this course…"
+              className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-900"
+            />
+            {error && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>}
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={submitting}
+              className="mt-2 rounded-md bg-brand-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
+            >
+              {submitting ? 'Submitting…' : submitted ? 'Update review' : 'Submit review'}
+            </button>
+          </div>
+        ) : (
+          <p className="mb-6 text-sm text-slate-500 dark:text-slate-400">{eligible.reason}</p>
+        )
+      )}
+
+      {reviews.length === 0 ? (
+        <p className="text-sm text-slate-500 dark:text-slate-400">No reviews yet.</p>
+      ) : (
+        <ul className="flex flex-col gap-3">
+          {reviews.map((review) => (
+            <li key={review.id} className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+              <div className="flex items-center justify-between">
+                <span className="text-amber-400">{'★'.repeat(review.rating)}{'☆'.repeat(5 - review.rating)}</span>
+                <span className="text-xs text-slate-400">{review.reviewerName ?? 'Anonymous'}</span>
+              </div>
+              {review.comment && <p className="mt-2 text-sm text-slate-700 dark:text-slate-300">{review.comment}</p>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }

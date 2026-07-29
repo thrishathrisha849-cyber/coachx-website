@@ -9,6 +9,7 @@ import { getPublishedModulesInOrder } from '../lms/access-evaluator.service';
 import { findPublishedLessonsByModule } from '../lms/lesson.repository';
 import { findLessonProgressForEnrollment } from '../lms/progress.repository';
 import { getOnboardingProgress } from '../onboarding/onboarding.service';
+import { getRecommendationsForLearner, type RecommendationItem } from '../lms/recommendation.service';
 import type {
   DashboardWidget,
   CriticalAlert,
@@ -152,6 +153,12 @@ async function buildProgressAndMilestonesWidget(userId: string): Promise<Dashboa
   };
 }
 
+/** 004 Discovery & Recommendations batch (FR-088) — real, deterministic recommendations now populate this widget; see `recommendation.service.ts`'s file header for why there is no AI-driven layer yet. */
+async function buildRecommendationsWidget(userId: string): Promise<DashboardWidget<RecommendationItem[]>> {
+  const result = await getRecommendationsForLearner(userId);
+  return result.items.length > 0 ? { status: 'ok', data: result.items } : emptyWidget('No recommendations yet — keep learning to unlock personalized suggestions.');
+}
+
 export interface DashboardResponse {
   isNewUser: boolean;
   widgets: {
@@ -161,7 +168,7 @@ export interface DashboardResponse {
     upcomingLiveSession: DashboardWidget<null>;
     currentChallenge: DashboardWidget<null>;
     progressAndMilestones: DashboardWidget<ProgressAndMilestones>;
-    recommendations: DashboardWidget<null>;
+    recommendations: DashboardWidget<RecommendationItem[]>;
     communityHighlights: DashboardWidget<null>;
     savedItems: DashboardWidget<null>;
     membership: DashboardWidget<null>;
@@ -185,11 +192,12 @@ export interface DashboardResponse {
 export async function getDashboard(userId: string): Promise<DashboardResponse> {
   const onboardingProgress = await getOnboardingProgress(userId);
 
-  const [criticalAlerts, nextBestAction, continueLearning, progressAndMilestones] = await Promise.all([
+  const [criticalAlerts, nextBestAction, continueLearning, progressAndMilestones, recommendations] = await Promise.all([
     safeWidget('criticalAlerts', () => buildCriticalAlertsWidget(userId)),
     safeWidget('nextBestAction', () => buildNextBestActionWidget(userId)),
     safeWidget('continueLearning', () => buildContinueLearningWidget(userId)),
     safeWidget('progressAndMilestones', () => buildProgressAndMilestonesWidget(userId)),
+    safeWidget('recommendations', () => buildRecommendationsWidget(userId)),
   ]);
 
   return {
@@ -201,7 +209,7 @@ export async function getDashboard(userId: string): Promise<DashboardResponse> {
       upcomingLiveSession: emptyWidget('Events are not available yet.'),
       currentChallenge: emptyWidget('Challenges are not available yet.'),
       progressAndMilestones,
-      recommendations: emptyWidget('Personalized recommendations are not available yet.'),
+      recommendations,
       communityHighlights: emptyWidget('Community is not available yet.'),
       savedItems: emptyWidget('Saved items are not available yet.'),
       membership: emptyWidget('Membership/subscription tracking is not available yet.'),

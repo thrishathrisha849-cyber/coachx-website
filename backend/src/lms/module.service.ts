@@ -7,7 +7,6 @@ import { findCourseById } from './course.repository';
 import {
   findModuleById,
   findModulesByCourse,
-  countModulesByCourse,
   createModule,
   updateModule,
   reorderModulePositions,
@@ -95,6 +94,34 @@ async function assertValidPrerequisite(
   }
 }
 
+/**
+ * 004 US6 polish batch (FR-034 "sequencing mode") — derives the
+ * `releaseRuleType`/`prerequisiteModuleId` a NEW module gets when the
+ * caller doesn't explicitly supply one, from the course's authoring-time
+ * `sequencingMode`. Only ever fills in a gap — an admin who explicitly
+ * sets either field always wins (checked by the caller before this runs).
+ * FLEXIBLE/HYBRID apply no default at all (identical to this codebase's
+ * pre-existing IMMEDIATE/no-prerequisite behavior), so an existing
+ * course's modules are completely unaffected by this batch.
+ */
+function deriveModuleSequencingDefaults(
+  sequencingMode: string,
+  previousModuleId: string | null,
+): { releaseRuleType: string; prerequisiteModuleId: string | null } {
+  switch (sequencingMode) {
+    case 'SEQUENTIAL':
+      return previousModuleId
+        ? { releaseRuleType: 'AFTER_PREVIOUS_MODULE', prerequisiteModuleId: previousModuleId }
+        : { releaseRuleType: 'IMMEDIATE', prerequisiteModuleId: null };
+    case 'INSTRUCTOR_CONTROLLED':
+      return { releaseRuleType: 'INSTRUCTOR_RELEASE', prerequisiteModuleId: null };
+    case 'FLEXIBLE':
+    case 'HYBRID':
+    default:
+      return { releaseRuleType: 'IMMEDIATE', prerequisiteModuleId: null };
+  }
+}
+
 export async function createCourseModule(
   courseId: string,
   input: ModuleInput,
@@ -111,9 +138,19 @@ export async function createCourseModule(
     // must be unique per (courseId, position); a supplied duplicate
     // position surfaces as a normalized 409 via the unique-constraint
     // catch below, rather than a confusing raw Prisma error.
-    const nextPosition = input.position ?? (await countModulesByCourse(courseId, tx));
+    const existingModules = await findModulesByCourse(courseId, tx);
+    const nextPosition = input.position ?? existingModules.length;
 
-    await assertValidPrerequisite(courseId, undefined, nextPosition, input.prerequisiteModuleId, tx);
+    let releaseRuleType = input.releaseRuleType;
+    let prerequisiteModuleId = input.prerequisiteModuleId;
+    if (releaseRuleType === undefined && prerequisiteModuleId === undefined) {
+      const previousModule = existingModules.find((m) => m.position === nextPosition - 1) ?? null;
+      const derived = deriveModuleSequencingDefaults(course.sequencingMode, previousModule?.id ?? null);
+      releaseRuleType = derived.releaseRuleType;
+      prerequisiteModuleId = derived.prerequisiteModuleId;
+    }
+
+    await assertValidPrerequisite(courseId, undefined, nextPosition, prerequisiteModuleId, tx);
 
     const module_ = await createModule(
       {
@@ -125,8 +162,8 @@ export async function createCourseModule(
         estimatedDurationMinutes: input.estimatedDurationMinutes,
         isMandatory: input.isMandatory ?? true,
         isPreview: input.isPreview ?? false,
-        ...(input.prerequisiteModuleId ? { prerequisiteModule: { connect: { id: input.prerequisiteModuleId } } } : {}),
-        releaseRuleType: (input.releaseRuleType ?? 'IMMEDIATE') as never,
+        ...(prerequisiteModuleId ? { prerequisiteModule: { connect: { id: prerequisiteModuleId } } } : {}),
+        releaseRuleType: (releaseRuleType ?? 'IMMEDIATE') as never,
         releaseRuleValue: input.releaseRuleValue as never,
         completionRuleType: (input.completionRuleType ?? 'MANUAL') as never,
         metadata: input.metadata as never,

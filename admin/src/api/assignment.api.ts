@@ -16,6 +16,11 @@ export interface AdminAssignment {
   maxAttempts: number | null;
   status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
   version: number;
+  peerReviewEnabled: boolean;
+  peerReviewsRequired: number;
+  peerReviewAnonymous: boolean;
+  peerReviewDeadlineDays: number | null;
+  peerReviewIncludeInGrade: boolean;
 }
 
 export interface AdminRubricCriterion {
@@ -51,6 +56,11 @@ export interface CreateAssignmentInput {
   passingScore: number;
   latePolicy: string;
   maxAttempts: number | null;
+  peerReviewEnabled?: boolean;
+  peerReviewsRequired?: number;
+  peerReviewAnonymous?: boolean;
+  peerReviewDeadlineDays?: number | null;
+  peerReviewIncludeInGrade?: boolean;
 }
 
 export async function createAssignment(lessonId: string, input: CreateAssignmentInput): Promise<AdminAssignment> {
@@ -117,13 +127,32 @@ export interface CriterionScoreResult {
   comment: string | null;
 }
 
+export interface PeerReviewForInstructor {
+  id: string;
+  reviewerEnrollmentId: string;
+  reviewerUserId: string;
+  reviewerDisplayName: string | null;
+  status: string;
+  comment: string | null;
+  totalScore: number | null;
+  submittedAt: string | null;
+  moderationStatus: 'VISIBLE' | 'HIDDEN';
+  moderationReason: string | null;
+  criterionScores: CriterionScoreResult[];
+}
+
 export interface AdminSubmissionDetail extends AdminSubmissionSummary {
   criterionScores: CriterionScoreResult[];
+  peerReviews: PeerReviewForInstructor[];
 }
 
 export async function getSubmission(submissionId: string): Promise<AdminSubmissionDetail> {
   const { data } = await apiClient.get<ApiSuccessResponse<AdminSubmissionDetail>>(`/lms/admin/submissions/${submissionId}`);
   return data.data;
+}
+
+export async function moderatePeerReview(peerReviewId: string, action: 'HIDE' | 'RESTORE', reason?: string): Promise<void> {
+  await apiClient.post(`/lms/admin/peer-reviews/${peerReviewId}/moderate`, { action, reason });
 }
 
 export interface ReviewInput {

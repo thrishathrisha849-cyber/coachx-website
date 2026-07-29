@@ -8,10 +8,13 @@ const NAV_ITEMS = [
   { to: '/moderation', label: 'Moderation Queue' },
   { to: '/kpi', label: 'Business KPIs' },
   { to: '/governance', label: 'Governance' },
+  { to: '/lms-categories', label: 'LMS Categories' },
+  { to: '/lms-courses', label: 'LMS Courses' },
   { to: '/quizzes', label: 'Quizzes' },
   { to: '/assignments', label: 'Assignments' },
   { to: '/certificate-templates', label: 'Certificate Templates' },
   { to: '/course-certificates', label: 'Course Certificates' },
+  { to: '/course-reviews', label: 'Course Reviews' },
 ];
 
 /** 001 FR-023 admin module registry — populated as each domain module lands (Governance Foundation is the first). */

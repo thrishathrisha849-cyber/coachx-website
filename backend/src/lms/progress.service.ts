@@ -11,6 +11,7 @@ import { findLessonProgress, findLessonProgressForEnrollment, upsertLessonProgre
 import { evaluateLessonAccess } from './access-evaluator.service';
 import { MAX_TIME_SPENT_DELTA_SECONDS } from './progress.validation';
 import { scopedIdempotencyKey } from './lms-idempotency.util';
+import { recordLearningEvent } from './learning-event.service';
 import type { TransactionClient } from '../database/transaction';
 
 export interface ProgressUpdateInput {
@@ -104,6 +105,16 @@ export async function updateLessonProgress(userId: string, lessonId: string, inp
   await assertLastPositionMatchesLessonActivities(lessonId, input.lastPosition);
   const { enrollment } = await resolveLessonContext(userId, lessonId);
 
+  // FR-109 COURSE_STARTED — fired once, the first time this enrollment
+  // records any progress at all (`lastAccessedAt` is only ever null before
+  // the first touch — see this file's own `applyProgressUpdate` below,
+  // which sets it unconditionally on every call). Best-effort: under a
+  // genuine race this could fire twice, which is harmless for an
+  // analytics event (unlike a financial/entitlement record).
+  if (enrollment.lastAccessedAt === null) {
+    await recordLearningEvent({ eventType: 'COURSE_STARTED', userId, courseId: enrollment.courseId, enrollmentId: enrollment.id });
+  }
+
   if (idempotencyKey) {
     const key = scopedIdempotencyKey(userId, idempotencyKey, lessonId);
     const outcome = await beginIdempotentOperation<Awaited<ReturnType<typeof applyProgressUpdate>>>('lms.progress.discrete_event', key, {
@@ -120,7 +131,7 @@ export async function updateLessonProgress(userId: string, lessonId: string, inp
     }
 
     try {
-      const result = await applyProgressUpdate(enrollment.id, lessonId, input);
+      const result = await applyProgressUpdate(enrollment.id, lessonId, input, userId, enrollment.courseId);
       await outcome.complete(result);
       return result;
     } catch (error) {
@@ -129,10 +140,10 @@ export async function updateLessonProgress(userId: string, lessonId: string, inp
     }
   }
 
-  return applyProgressUpdate(enrollment.id, lessonId, input);
+  return applyProgressUpdate(enrollment.id, lessonId, input, userId, enrollment.courseId);
 }
 
-async function applyProgressUpdate(enrollmentId: string, lessonId: string, input: ProgressUpdateInput) {
+async function applyProgressUpdate(enrollmentId: string, lessonId: string, input: ProgressUpdateInput, userId: string, courseId: string) {
   return withTransaction(async (tx) => {
     const existing = await findLessonProgress(enrollmentId, lessonId, tx);
     const now = new Date();
@@ -182,6 +193,18 @@ async function applyProgressUpdate(enrollmentId: string, lessonId: string, input
     );
 
     await tx.enrollment.update({ where: { id: enrollmentId }, data: { lastAccessedAt: now } });
+
+    // FR-109 VIDEO_STARTED/VIDEO_PROGRESSED — coarse-grained (one row per
+    // progress-update request, not per playback heartbeat — same "do not
+    // audit every heartbeat" discipline this file's own
+    // `recordProgressAuditCheckpoint` doc comment already establishes).
+    const positionKind = (input.lastPosition as { kind?: string } | undefined)?.kind;
+    if (positionKind === 'video') {
+      await recordLearningEvent(
+        { eventType: existing ? 'VIDEO_PROGRESSED' : 'VIDEO_STARTED', userId, courseId, lessonId, enrollmentId, metadata: { watchedPercent: nextPercent } },
+        tx,
+      );
+    }
 
     return updated;
   });

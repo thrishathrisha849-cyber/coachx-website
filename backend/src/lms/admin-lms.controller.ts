@@ -59,6 +59,11 @@ import {
   getEnrollmentAdmin,
 } from './enrollment.service';
 import { overrideMarkComplete, overrideReset } from './completion.service';
+import { cloneCourse } from './course-clone.service';
+import { getLearnerAnalyticsForEnrollment } from './learner-analytics.service';
+import { getCourseAnalytics } from './course-analytics.service';
+import { getLessonAnalytics, getLessonAnalyticsForCourse } from './lesson-analytics.service';
+import { assessAtRiskForEnrollment, listAtRiskLearnersForCourse } from './at-risk.service';
 
 /**
  * Admin LMS write API (Phase 6 Part 1 brief's "Admin API Requirements").
@@ -189,6 +194,12 @@ export const postArchiveCourse = asyncHandler(async (req: Request, res: Response
 export const postRestoreCourse = asyncHandler(async (req: Request, res: Response) => {
   const course = await restoreCourse(req.params.id, req.user!.id);
   res.status(200).json(buildSuccessResponse(course));
+});
+
+/** 004 US8 (Course Cloning batch) — FR-098. */
+export const postCloneCourse = asyncHandler(async (req: Request, res: Response) => {
+  const course = await cloneCourse(req.params.id, req.body, req.user!.id);
+  res.status(201).json(buildSuccessResponse(course));
 });
 
 // --- Instructor assignment -----------------------------------------------
@@ -383,4 +394,42 @@ export const postOverrideComplete = asyncHandler(async (req: Request, res: Respo
 export const postResetProgress = asyncHandler(async (req: Request, res: Response) => {
   await overrideReset(req.params.id, req.body.scope, req.body.targetId, req.body.reason, req.user!.id, req.header('Idempotency-Key'));
   res.status(200).json(buildSuccessResponse({ reset: true }));
+});
+
+// --- Learning Analytics & At-Risk Detection (004 FR-105–FR-108) -----------
+
+/** GET /admin/enrollments/:id/analytics — FR-105 single-learner analytics. */
+export const getEnrollmentAnalyticsAdmin = asyncHandler(async (req: Request, res: Response) => {
+  const analytics = await getLearnerAnalyticsForEnrollment(req.params.id);
+  res.status(200).json(buildSuccessResponse(analytics));
+});
+
+/** GET /admin/enrollments/:id/at-risk — FR-108 single-learner assessment. */
+export const getEnrollmentAtRiskAdmin = asyncHandler(async (req: Request, res: Response) => {
+  const assessment = await assessAtRiskForEnrollment(req.params.id);
+  res.status(200).json(buildSuccessResponse(assessment));
+});
+
+/** GET /admin/courses/:id/analytics — FR-106 course-level analytics. */
+export const getCourseAnalyticsAdmin = asyncHandler(async (req: Request, res: Response) => {
+  const analytics = await getCourseAnalytics(req.params.id);
+  res.status(200).json(buildSuccessResponse(analytics));
+});
+
+/** GET /admin/courses/:id/at-risk-learners — FR-108's "instructor alert" surface. */
+export const getCourseAtRiskLearnersAdmin = asyncHandler(async (req: Request, res: Response) => {
+  const assessments = await listAtRiskLearnersForCourse(req.params.id);
+  res.status(200).json(buildSuccessResponse(assessments));
+});
+
+/** GET /admin/lessons/:lessonId/analytics — FR-107 single-lesson analytics. */
+export const getLessonAnalyticsAdmin = asyncHandler(async (req: Request, res: Response) => {
+  const analytics = await getLessonAnalytics(req.params.lessonId);
+  res.status(200).json(buildSuccessResponse(analytics));
+});
+
+/** GET /admin/courses/:id/lessons/analytics — FR-107 bulk per-course lesson analytics. */
+export const getCourseLessonAnalyticsAdmin = asyncHandler(async (req: Request, res: Response) => {
+  const analytics = await getLessonAnalyticsForCourse(req.params.id);
+  res.status(200).json(buildSuccessResponse(analytics));
 });

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { getAssignment } from '@/api/assignment.api';
-import { getSubmission, reviewSubmission, type AdminSubmissionDetail } from '@/api/assignment.api';
+import { getSubmission, reviewSubmission, moderatePeerReview, type AdminSubmissionDetail } from '@/api/assignment.api';
 import type { AdminRubricCriterion } from '@/api/assignment.api';
 import type { NormalizedApiError } from '@/api/client';
 
@@ -14,11 +14,12 @@ export function SubmissionReviewPage() {
   const [scores, setScores] = useState<Record<string, { pointsAwarded: number; comment: string }>>({});
   const [reviewerNote, setReviewerNote] = useState('');
   const [learnerFeedback, setLearnerFeedback] = useState('');
+  const [peerReviewReasons, setPeerReviewReasons] = useState<Record<string, string>>({});
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
+  function load() {
     getSubmission(submissionId)
       .then(async (s) => {
         setSubmission(s);
@@ -32,7 +33,15 @@ export function SubmissionReviewPage() {
         setLoadState('ready');
       })
       .catch(() => setLoadState('error'));
-  }, [submissionId]);
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(load, [submissionId]);
+
+  async function handleModeratePeerReview(peerReviewId: string, action: 'HIDE' | 'RESTORE') {
+    await moderatePeerReview(peerReviewId, action, action === 'HIDE' ? peerReviewReasons[peerReviewId] : undefined);
+    load();
+  }
 
   async function handleDecision(decision: 'APPROVE' | 'REQUEST_CHANGES' | 'REJECT') {
     setSubmitting(true);
@@ -102,6 +111,55 @@ export function SubmissionReviewPage() {
         ))}
         {criteria.length === 0 && <p className="text-sm text-slate-400">No rubric criteria defined for this assignment.</p>}
       </div>
+
+      {submission.peerReviews.length > 0 && (
+        <>
+          <h2 className="mt-6 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            Peer reviews ({submission.peerReviews.length})
+          </h2>
+          <div className="mt-3 flex flex-col gap-3">
+            {submission.peerReviews.map((r) => (
+              <div key={r.id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-slate-800 dark:text-slate-100">
+                    {r.reviewerDisplayName ?? r.reviewerUserId}
+                    {r.moderationStatus === 'HIDDEN' && <span className="ml-2 text-xs text-red-500">(hidden)</span>}
+                  </span>
+                  {r.totalScore !== null && <span className="text-xs text-slate-400">Score: {r.totalScore}</span>}
+                </div>
+                {r.comment && <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{r.comment}</p>}
+                <ul className="mt-2 flex flex-col gap-1">
+                  {r.criterionScores.map((cs) => (
+                    <li key={cs.criterionId} className="text-xs text-slate-500 dark:text-slate-400">
+                      {cs.criterionTitle}: {cs.pointsAwarded}/{cs.maxPoints}
+                      {cs.comment && ` — ${cs.comment}`}
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-2 flex items-center gap-2">
+                  {r.moderationStatus === 'VISIBLE' ? (
+                    <>
+                      <input
+                        value={peerReviewReasons[r.id] ?? ''}
+                        onChange={(e) => setPeerReviewReasons((prev) => ({ ...prev, [r.id]: e.target.value }))}
+                        placeholder="Reason for hiding (optional)"
+                        className="flex-1 rounded-md border border-slate-300 px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-900"
+                      />
+                      <button onClick={() => handleModeratePeerReview(r.id, 'HIDE')} className="rounded-md border border-slate-300 px-2 py-1 text-xs text-red-600 hover:border-red-400 dark:border-slate-700">
+                        Hide
+                      </button>
+                    </>
+                  ) : (
+                    <button onClick={() => handleModeratePeerReview(r.id, 'RESTORE')} className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:border-brand-400 dark:border-slate-700 dark:text-slate-200">
+                      Restore
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       <label className="mt-4 block text-sm">
         Private reviewer note (never shown to the learner)

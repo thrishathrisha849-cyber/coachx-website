@@ -63,9 +63,17 @@ export function DashboardPage() {
     <div className="mx-auto max-w-3xl">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Your dashboard</h1>
-        <Link to="/certificates" className="text-sm font-medium text-brand-600 hover:text-brand-700">
-          My Certificates →
-        </Link>
+        <div className="flex gap-4">
+          <Link to="/catalog" className="text-sm font-medium text-brand-600 hover:text-brand-700">
+            My Catalog →
+          </Link>
+          <Link to="/certificates" className="text-sm font-medium text-brand-600 hover:text-brand-700">
+            My Certificates →
+          </Link>
+          <Link to="/peer-reviews" className="text-sm font-medium text-brand-600 hover:text-brand-700">
+            Peer Review Queue →
+          </Link>
+        </div>
       </div>
 
       <div className="mt-6 flex flex-col gap-4">
@@ -155,7 +163,18 @@ export function DashboardPage() {
           )}
         </WidgetShell>
 
-        <WidgetShell title="Recommendations" widget={widgets.recommendations} />
+        <WidgetShell title="Recommendations" widget={widgets.recommendations}>
+          <ul className="flex flex-col gap-2">
+            {widgets.recommendations.data?.map((item, index) => (
+              <li key={`${item.type}-${item.courseId}-${index}`}>
+                <Link to={`/courses/${item.courseSlug}`} className="block rounded-md border border-slate-200 p-3 hover:border-brand-400 dark:border-slate-800">
+                  <p className="text-sm font-semibold text-slate-900 dark:text-white">{item.courseTitle}</p>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{item.reason}</p>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </WidgetShell>
         <WidgetShell title="Community highlights" widget={widgets.communityHighlights} />
         <WidgetShell title="Saved items" widget={widgets.savedItems} />
         <WidgetShell title="Membership & rewards" widget={widgets.membership} />

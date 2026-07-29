@@ -15,6 +15,7 @@ import { computeModuleProgress } from './progress.service';
 import { scopedIdempotencyKey } from './lms-idempotency.util';
 import { findQuizByLessonId, hasPassedQuiz } from './quiz.repository';
 import { findAssignmentByLessonId, hasApprovedSubmission } from './assignment.repository';
+import { recordLearningEvent } from './learning-event.service';
 import type { TransactionClient } from '../database/transaction';
 
 /**
@@ -72,6 +73,17 @@ export async function completeLessonForEnrollment(
     { actorType: 'USER', actorId, action: 'lms.lesson.completed', resourceType: 'lesson_progress', resourceId: `${enrollmentId}:${lessonId}`, metadata: { source } },
     tx,
   );
+
+  // FR-109 LESSON_COMPLETED — attributed to the enrollment's own learner,
+  // never `actorId` (which is the ADMIN/instructor for an override
+  // completion, not the learner the analytics row is about).
+  const owningEnrollment = await findEnrollmentById(enrollmentId, tx);
+  if (owningEnrollment) {
+    await recordLearningEvent(
+      { eventType: 'LESSON_COMPLETED', userId: owningEnrollment.userId, courseId: owningEnrollment.courseId, lessonId, enrollmentId, metadata: { source } },
+      tx,
+    );
+  }
 
   return { alreadyCompleted: false };
 }
@@ -382,6 +394,14 @@ export async function recordActivityViewed(userId: string, activityId: string): 
 
   await upsertActivityViewed(enrollment.id, activityId, lesson.id);
 
+  // FR-109 RESOURCE_DOWNLOADED — the closest real signal this codebase has
+  // to "a resource was downloaded" (no file-download-tracking endpoint
+  // exists separate from the generic activity-viewed signal — see
+  // `docs/lms/LEARNING_ACTIVITIES.md`'s DOWNLOAD-type limitations).
+  if (activity.type === 'DOWNLOAD') {
+    await recordLearningEvent({ eventType: 'RESOURCE_DOWNLOADED', userId, courseId: module_.courseId, lessonId: lesson.id, enrollmentId: enrollment.id });
+  }
+
   const rules = getEffectiveCompletionRules(lesson);
   if (rules.includes('MANUAL') || rules.includes('INSTRUCTOR_APPROVAL')) return;
   if (!rules.includes('ALL_ACTIVITIES_VIEWED')) return;
@@ -457,6 +477,11 @@ export async function recomputeEnrollmentCompletion(enrollmentId: string, course
     { actorType: 'USER', actorId, action: 'lms.enrollment.completed', resourceType: 'enrollment', resourceId: enrollmentId },
     tx,
   );
+
+  // FR-109 COURSE_COMPLETED — attributed to the learner (`enrollment.
+  // userId`), never `actorId` (an admin-override completion still
+  // represents the LEARNER completing the course, analytically).
+  await recordLearningEvent({ eventType: 'COURSE_COMPLETED', userId: enrollment.userId, courseId, enrollmentId }, tx);
 }
 
 // --- Admin/instructor overrides (FR-113) ------------------------------------

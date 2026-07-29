@@ -13,6 +13,15 @@ export const assignmentIdParamSchema = z.object({ params: z.object({ assignmentI
 // Admin: Assignment
 // ============================================================================
 
+// FR-076 Peer Review config (004 US9 batch) — shared between create/update.
+const peerReviewConfigFields = {
+  peerReviewEnabled: z.boolean().default(false),
+  peerReviewsRequired: z.number().int().min(0).max(20).default(0),
+  peerReviewAnonymous: z.boolean().default(true),
+  peerReviewDeadlineDays: z.number().int().min(1).max(365).nullable().optional(),
+  peerReviewIncludeInGrade: z.boolean().default(false),
+};
+
 export const createAssignmentSchema = z.object({
   params: z.object({ lessonId: uuid() }),
   body: z.object({
@@ -26,6 +35,7 @@ export const createAssignmentSchema = z.object({
     passingScore: z.number().int().min(0).max(100000).default(70),
     latePolicy: z.enum(LATE_POLICIES).default('ACCEPT'),
     maxAttempts: z.number().int().min(1).max(100).nullable().optional(),
+    ...peerReviewConfigFields,
   }),
 });
 
@@ -43,6 +53,11 @@ export const updateAssignmentSchema = z.object({
       passingScore: z.number().int().min(0).max(100000),
       latePolicy: z.enum(LATE_POLICIES),
       maxAttempts: z.number().int().min(1).max(100).nullable(),
+      peerReviewEnabled: z.boolean(),
+      peerReviewsRequired: z.number().int().min(0).max(20),
+      peerReviewAnonymous: z.boolean(),
+      peerReviewDeadlineDays: z.number().int().min(1).max(365).nullable(),
+      peerReviewIncludeInGrade: z.boolean(),
     })
     .partial()
     .refine((b) => Object.keys(b).length > 0, { message: 'Request body must not be empty' }),
@@ -116,5 +131,32 @@ export const listSubmissionsQuerySchema = z.object({
   params: z.object({ assignmentId: uuid() }),
   query: z.object({
     status: z.enum(['DRAFT', 'SUBMITTED', 'UNDER_REVIEW', 'CHANGES_REQUESTED', 'APPROVED', 'REJECTED', 'EXCUSED']).optional(),
+  }),
+});
+
+// ============================================================================
+// Peer Review (FR-076, 004 US9 batch)
+// ============================================================================
+
+export const peerReviewIdParamSchema = z.object({ params: z.object({ peerReviewId: uuid() }) });
+
+export const submitPeerReviewSchema = z.object({
+  params: z.object({ peerReviewId: uuid() }),
+  body: z.object({
+    criterionScores: z
+      .array(z.object({ criterionId: uuid(), pointsAwarded: z.number().int().min(0), comment: z.string().max(2000).optional() }))
+      .max(100)
+      .default([]),
+    comment: z.string().max(5000).optional(),
+  }),
+});
+
+export const MODERATE_PEER_REVIEW_ACTIONS = ['HIDE', 'RESTORE'] as const;
+
+export const moderatePeerReviewSchema = z.object({
+  params: z.object({ peerReviewId: uuid() }),
+  body: z.object({
+    action: z.enum(MODERATE_PEER_REVIEW_ACTIONS),
+    reason: z.string().max(2000).optional(),
   }),
 });

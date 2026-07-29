@@ -5,7 +5,9 @@ import {
   getMySubmissions,
   saveDraft,
   submitSubmission,
+  getMyPeerReviewsReceived,
   type SubmissionResult,
+  type PeerReviewForSubmitter,
 } from '@/api/assignment.api';
 import type { NormalizedApiError } from '@/api/client';
 import { useDocumentHead } from '@/hooks/useDocumentHead';
@@ -29,6 +31,7 @@ export function AssignmentPage() {
   const [loadState, setLoadState] = useState<LoadState>('loading');
   const [current, setCurrent] = useState<SubmissionResult | null>(null);
   const [history, setHistory] = useState<SubmissionResult[]>([]);
+  const [peerReviews, setPeerReviews] = useState<PeerReviewForSubmitter[]>([]);
   const [textBody, setTextBody] = useState('');
   const [linkUrl, setLinkUrl] = useState('');
   const [saving, setSaving] = useState(false);
@@ -45,6 +48,9 @@ export function AssignmentPage() {
       setLinkUrl(submission.linkUrl ?? '');
       const submissionHistory = await getMySubmissions(assignmentId);
       setHistory(submissionHistory);
+      if (submission.status !== 'DRAFT') {
+        setPeerReviews(await getMyPeerReviewsReceived(submission.id));
+      }
       setLoadState('ready');
     } catch (err) {
       const apiError = err as NormalizedApiError;
@@ -185,6 +191,23 @@ export function AssignmentPage() {
           <button type="button" onClick={handleNewAttempt} className="mt-3 rounded-md bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">
             Start new attempt
           </button>
+        </div>
+      )}
+
+      {peerReviews.length > 0 && (
+        <div className="mt-6">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Peer reviews received</h2>
+          <ul className="mt-2 flex flex-col gap-2">
+            {peerReviews.map((r) => (
+              <li key={r.id} className="rounded-md border border-slate-200 p-3 text-sm dark:border-slate-800">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-slate-700 dark:text-slate-200">{r.reviewerDisplayName ?? 'Anonymous peer'}</span>
+                  {r.totalScore !== null && <span className="text-slate-500 dark:text-slate-400">Score: {r.totalScore}</span>}
+                </div>
+                {r.comment && <p className="mt-1 text-slate-600 dark:text-slate-300">{r.comment}</p>}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

@@ -3,6 +3,7 @@ import { buildSuccessResponse } from '@coachx/shared';
 import { asyncHandler } from '../utils/async-handler';
 import { listPublicCategories } from './category.service';
 import { getPublicCourseBySlug, listPublicCoursesForDiscovery, getPublicCourseModulesBySlug } from './course.service';
+import { recordLearningEvent } from './learning-event.service';
 
 /**
  * Public, read-only LMS discovery API (Phase 6 Part 1 brief's "Public
@@ -29,6 +30,9 @@ export const getPublicCourses = asyncHandler(async (req: Request, res: Response)
       instructorId: req.query.instructorId as string | undefined,
       featured: req.query.featured === undefined ? undefined : req.query.featured === 'true',
       priceType: req.query.priceType as string | undefined,
+      certificateAvailable: req.query.certificateAvailable === undefined ? undefined : req.query.certificateAvailable === 'true',
+      maxDurationMinutes: req.query.maxDurationMinutes ? Number(req.query.maxDurationMinutes) : undefined,
+      format: req.query.format as string | undefined,
     },
     { page: req.query.page as string, pageSize: req.query.pageSize as string },
     (req.query.sort as string) ?? 'newest',
@@ -39,6 +43,14 @@ export const getPublicCourses = asyncHandler(async (req: Request, res: Response)
 /** GET /api/v1/lms/courses/:slug */
 export const getPublicCourseDetail = asyncHandler(async (req: Request, res: Response) => {
   const course = await getPublicCourseBySlug(req.params.slug);
+
+  // FR-109 COURSE_VIEWED — only for a resolvable logged-in viewer
+  // (`authenticateOptional` on this route); an anonymous browse is never
+  // fabricated into an analytics row.
+  if (req.user) {
+    await recordLearningEvent({ eventType: 'COURSE_VIEWED', userId: req.user.id, courseId: course.id });
+  }
+
   res.status(200).json(buildSuccessResponse(course));
 });
 

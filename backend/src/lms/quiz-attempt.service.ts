@@ -6,8 +6,9 @@ import { scopedIdempotencyKey } from './lms-idempotency.util';
 import { findLessonById } from './lesson.repository';
 import { findModuleById } from './module.repository';
 import { evaluateLessonAccess } from './access-evaluator.service';
-import { findEnrollmentForUserAndCourse } from './enrollment.repository';
+import { findEnrollmentForUserAndCourse, findEnrollmentById } from './enrollment.repository';
 import { maybeAutoCompleteFromQuizPass } from './completion.service';
+import { recordLearningEvent } from './learning-event.service';
 import {
   findQuizById,
   findPublishedQuestionsByQuiz,
@@ -79,7 +80,7 @@ async function autoSubmitIfExpired(attemptId: string, actorId: string): Promise<
  * for the same enrollment+quiz).
  */
 export async function startOrResumeAttempt(userId: string, quizId: string): Promise<QuizAttemptWithQuestions> {
-  const { quiz, enrollmentId } = await resolveQuizContext(userId, quizId);
+  const { quiz, courseId, enrollmentId } = await resolveQuizContext(userId, quizId);
 
   const existingAttempts = await findAttemptsForEnrollmentQuiz(enrollmentId, quizId);
   const inProgress = existingAttempts.find((a) => a.status === 'IN_PROGRESS');
@@ -119,6 +120,10 @@ export async function startOrResumeAttempt(userId: string, quizId: string): Prom
     );
     await recordAuditEvent(
       { actorType: 'USER', actorId: userId, action: 'lms.quiz_attempt.started', resourceType: 'quiz_attempt', resourceId: created.id, metadata: { quizId, attemptNumber: created.attemptNumber } },
+      tx,
+    );
+    await recordLearningEvent(
+      { eventType: 'QUIZ_STARTED', userId, courseId, lessonId: quiz!.lessonId, enrollmentId, metadata: { quizId, attemptNumber: created.attemptNumber } },
       tx,
     );
     return created;
@@ -321,6 +326,37 @@ async function gradeAndFinalizeAttempt(attemptId: string, actorId: string): Prom
       { actorType: 'USER', actorId, action: 'lms.quiz_attempt.graded', resourceType: 'quiz_attempt', resourceId: attemptId, afterState: { scorePercent, passed } },
       tx,
     );
+
+    // FR-109 — the owning enrollment is fetched fresh (not derived from
+    // `actorId`) for the same reason `completion.service.ts`'s
+    // `completeLessonForEnrollment` does: `actorId` can be an admin/
+    // instructor override in principle, the enrollment's own `userId` is
+    // the only reliable "whose learning event is this" source.
+    const owningEnrollment = await findEnrollmentById(attempt.enrollmentId, tx);
+    if (owningEnrollment) {
+      await recordLearningEvent(
+        {
+          eventType: 'QUIZ_SUBMITTED',
+          userId: owningEnrollment.userId,
+          courseId: owningEnrollment.courseId,
+          lessonId: quiz.lessonId,
+          enrollmentId: attempt.enrollmentId,
+          metadata: { attemptId, scorePercent, passed },
+        },
+        tx,
+      );
+      await recordLearningEvent(
+        {
+          eventType: passed ? 'QUIZ_PASSED' : 'QUIZ_FAILED',
+          userId: owningEnrollment.userId,
+          courseId: owningEnrollment.courseId,
+          lessonId: quiz.lessonId,
+          enrollmentId: attempt.enrollmentId,
+          metadata: { attemptId, scorePercent },
+        },
+        tx,
+      );
+    }
 
     return toAttemptResult(updated);
   }).then(async (result) => {

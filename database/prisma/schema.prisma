@@ -258,6 +258,8 @@ model User {
   courseInstructorRoles CourseInstructor[]
   /// Phase 6 Part 2 — a learner's course access grants (004 FR-021–033).
   enrollments           Enrollment[]
+  /// 004 Discovery & Recommendations batch (FR-087) — a learner's own course reviews.
+  courseReviews         CourseReview[]
 
   /// 001 FR-086: Organization Admin's own-organization scope. Nullable —
   /// most users belong to no organization; set only for Organization-tier
@@ -1501,6 +1503,19 @@ model Course {
   isFeatured      Boolean @default(false) @map("is_featured")
   enrollmentLimit Int?    @map("enrollment_limit")
 
+  /// 004 US6 polish batch (FR-034 "sequencing mode") — a course-wide
+  /// AUTHORING-TIME default applied when a NEW module is added without an
+  /// explicit `releaseRuleType`/`prerequisiteModuleId` (see
+  /// `module.service.ts`'s `deriveModuleSequencingDefaults`): SEQUENTIAL
+  /// auto-chains each new module after the previous one;
+  /// INSTRUCTOR_CONTROLLED defaults new modules to manual release;
+  /// FLEXIBLE/HYBRID apply no default (same as this field's own default —
+  /// existing courses are unaffected). Same "config only, service decides
+  /// enforcement" pattern already established for `CourseModule.
+  /// releaseRuleType` itself — this does not retroactively change any
+  /// already-created module, only what a NEW module defaults to.
+  sequencingMode CourseSequencingMode @default(FLEXIBLE) @map("sequencing_mode")
+
   enrollmentStartAt DateTime? @map("enrollment_start_at") @db.Timestamptz(6)
   enrollmentEndAt   DateTime? @map("enrollment_end_at") @db.Timestamptz(6)
 
@@ -1555,6 +1570,15 @@ model Course {
   publishedAt DateTime? @map("published_at") @db.Timestamptz(6)
   archivedAt  DateTime? @map("archived_at") @db.Timestamptz(6)
 
+  /// 004 US8 (Course Cloning batch) — FR-098 "translation variant" clone
+  /// mode: links a cloned course back to its source as a language variant.
+  /// Self-relation, nullable (most courses are not a translation of
+  /// anything). `onDelete: SetNull` — deleting the source course must
+  /// never cascade-delete its translation variants.
+  translationOfCourseId String?  @map("translation_of_course_id") @db.Uuid
+  translationOfCourse   Course?  @relation("CourseTranslation", fields: [translationOfCourseId], references: [id], onDelete: SetNull)
+  translationVariants   Course[] @relation("CourseTranslation")
+
   modules     CourseModule[]
   instructors CourseInstructor[]
   /// Phase 6 Part 2 (004 FR-021–033).
@@ -1566,6 +1590,8 @@ model Course {
   versions    CourseVersion[]
   /// 004 US5 (Certificate System batch).
   certificates Certificate[]
+  /// 004 Discovery & Recommendations batch (FR-087).
+  reviews      CourseReview[]
 
   @@index([status])
   @@index([categoryId])
@@ -1594,6 +1620,115 @@ model CourseVersion {
   @@unique([courseId, versionNumber])
   @@index([courseId])
   @@map("course_versions")
+}
+
+// ----------------------------------------------------------------------------
+// CourseReview — 004 Discovery & Recommendations batch (FR-087). "One active
+// review per user per course" is a hard `@@unique` — a learner UPDATES their
+// existing review rather than creating a second one (see
+// course-review.service.ts). Moderation is a status flip (VISIBLE/HIDDEN),
+// never a delete — FR-087: "instructors MUST NOT be able to directly delete
+// a negative review; only admin moderation policy may remove or hide it,"
+// so the row (and its audit trail) is preserved either way.
+// ----------------------------------------------------------------------------
+model CourseReview {
+  id       String @id @default(uuid()) @db.Uuid
+  courseId String @map("course_id") @db.Uuid
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  userId   String @map("user_id") @db.Uuid
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// 1-5, enforced at the validation layer (Prisma has no CHECK-constraint syntax).
+  rating         Int
+  title          String? @db.VarChar(200)
+  comment        String? @db.Text
+  /// FR-087 "outcome" — a short free-text "what did you achieve" statement.
+  outcome        String? @db.VarChar(500)
+  wouldRecommend Boolean @default(true) @map("would_recommend")
+  /// FR-087 "optional anonymous display" — the review is still tied to a
+  /// real `userId` internally (never anonymous to moderation/audit), only
+  /// the PUBLIC serializer omits the reviewer's name when this is true.
+  isAnonymous    Boolean @default(false) @map("is_anonymous")
+
+  status CourseReviewStatus @default(VISIBLE)
+
+  hiddenBy     String?   @map("hidden_by") @db.Uuid
+  hiddenAt     DateTime? @map("hidden_at") @db.Timestamptz(6)
+  hiddenReason String?   @map("hidden_reason") @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([courseId, userId])
+  @@index([courseId, status])
+  @@map("course_reviews")
+}
+
+enum CourseReviewStatus {
+  VISIBLE
+  HIDDEN
+
+  @@map("course_review_status")
+}
+
+// ----------------------------------------------------------------------------
+// LearningEvent — 004 Learning Analytics & At-Risk Detection batch (FR-109's
+// event taxonomy; the source every FR-105/106/107/108 aggregate reads from).
+// Same "opaque reference, not a relation" design AuditEvent already
+// established (docs/database/AUDITABILITY.md) — userId/courseId/lessonId/
+// enrollmentId are plain ids, NOT foreign keys, so this high-volume,
+// append-only analytics log can never be blocked by, or itself block, a
+// user/course/lesson delete.
+//
+// FR-109 names 19 event types; `learning_path_started`/`learning_path_
+// completed` are deliberately NOT modeled — no LearningPath entity exists
+// in this codebase (see Course's own doc comment / T004) — modeling an
+// event type for an entity that can never fire it would be a placeholder,
+// not a real taxonomy member. All 17 remaining types are real and emitted
+// by the corresponding existing service (see learning-event.service.ts's
+// call sites).
+// ----------------------------------------------------------------------------
+model LearningEvent {
+  id String @id @default(uuid()) @db.Uuid
+
+  eventType LearningEventType @map("event_type")
+
+  userId       String? @map("user_id") @db.Uuid
+  courseId     String? @map("course_id") @db.Uuid
+  lessonId     String? @map("lesson_id") @db.Uuid
+  enrollmentId String? @map("enrollment_id") @db.Uuid
+
+  metadata Json?
+
+  occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+
+  @@index([eventType, occurredAt])
+  @@index([courseId, eventType])
+  @@index([userId, occurredAt])
+  @@index([lessonId, eventType])
+  @@map("learning_events")
+}
+
+enum LearningEventType {
+  COURSE_VIEWED
+  COURSE_ENROLLED
+  COURSE_STARTED
+  LESSON_VIEWED
+  VIDEO_STARTED
+  VIDEO_PROGRESSED
+  LESSON_COMPLETED
+  QUIZ_STARTED
+  QUIZ_SUBMITTED
+  QUIZ_PASSED
+  QUIZ_FAILED
+  ASSIGNMENT_STARTED
+  ASSIGNMENT_SUBMITTED
+  ASSIGNMENT_REVIEWED
+  COURSE_COMPLETED
+  CERTIFICATE_ISSUED
+  RESOURCE_DOWNLOADED
+
+  @@map("learning_event_type")
 }
 
 /// FR-015's 12 editorial statuses reconciled with FR-100's 6-state review
@@ -1656,6 +1791,21 @@ enum CoursePriceType {
   PAID
 
   @@map("course_price_type")
+}
+
+/// FR-034 "sequencing mode" (004 US6 polish batch) — see `Course.
+/// sequencingMode`'s doc comment for exactly what each value defaults new
+/// modules to. HYBRID is intentionally identical to FLEXIBLE at the data
+/// level (no default applied) — it exists as a distinct, honest label for
+/// "some modules sequential, some not, configured per-module by the
+/// admin," not a third enforcement behavior this codebase doesn't have.
+enum CourseSequencingMode {
+  SEQUENTIAL
+  FLEXIBLE
+  HYBRID
+  INSTRUCTOR_CONTROLLED
+
+  @@map("course_sequencing_mode")
 }
 
 // ----------------------------------------------------------------------------
@@ -2291,6 +2441,36 @@ model Assignment {
 
   status AssignmentLifecycleStatus @default(DRAFT)
 
+  // ---------------------------------------------------------------------
+  // 004 US9 — Peer Review (FR-076) config, this batch. "Reviewer
+  // eligibility" is enforced in code (peer-review.service.ts), not a
+  // stored field: any OTHER enrolled learner in this course who has
+  // themselves a SUBMITTED-or-later Submission for this same Assignment
+  // is eligible — no automatic reviewer-matching/assignment algorithm is
+  // invented (not named by FR-076), reviewers self-select an open
+  // submission from a queue instead, capped at peerReviewsRequired
+  // concurrent claims per submission.
+  // ---------------------------------------------------------------------
+  peerReviewEnabled Boolean @default(false) @map("peer_review_enabled")
+  peerReviewsRequired Int   @default(0) @map("peer_reviews_required")
+  /// Governs whether the SUBMITTER learner sees who reviewed them — the
+  /// instructor/admin view always sees reviewer identity regardless
+  /// (accountability/moderation can't be anonymous to staff).
+  peerReviewAnonymous Boolean @default(true) @map("peer_review_anonymous")
+  /// Days after the submission's submittedAt before it stops appearing in
+  /// the peer-review queue (null = no deadline). An already-claimed
+  /// review is unaffected once claimed — matches the Edge Cases section's
+  /// "instructor moderation and override must remain available regardless
+  /// of peer-review completion state."
+  peerReviewDeadlineDays Int? @map("peer_review_deadline_days")
+  /// FR-076 "admin-controlled decision on whether the peer score is
+  /// included in the final grade" — informational-only flag surfaced to
+  /// the instructor's review screen (see peer-review.service.ts's doc
+  /// comment for why no automatic blending formula is invented); the
+  /// instructor's own rubric scoring always remains the sole authoritative
+  /// grade, never automatically overridden by a peer average.
+  peerReviewIncludeInGrade Boolean @default(false) @map("peer_review_include_in_grade")
+
   version   Int     @default(1)
   createdBy String? @map("created_by") @db.Uuid
   updatedBy String? @map("updated_by") @db.Uuid
@@ -2349,7 +2529,8 @@ model RubricCriterion {
   /// Quiz's `Question.deletedAt` provides).
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  scores SubmissionCriterionScore[]
+  scores          SubmissionCriterionScore[]
+  peerReviewScores PeerReviewCriterionScore[]
 
   @@unique([assignmentId, position])
   @@map("rubric_criteria")
@@ -2397,6 +2578,7 @@ model Submission {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   criterionScores SubmissionCriterionScore[]
+  peerReviews     PeerReview[]
 
   @@unique([enrollmentId, assignmentId, attemptNumber])
   @@index([assignmentId, status])
@@ -2431,6 +2613,90 @@ model SubmissionCriterionScore {
 
   @@unique([submissionId, criterionId])
   @@map("submission_criterion_scores")
+}
+
+// -----------------------------------------------------------------------------
+// 004 US9 — Peer Review (FR-076 batch). A peer reviewer self-selects an open
+// submission from a queue (see `Assignment.peerReviewEnabled` doc comment
+// for why no automatic reviewer-matching algorithm is invented) and scores
+// it against the SAME `RubricCriterion` set the instructor uses — informing,
+// never automatically overriding, the instructor's own final grade
+// (`Submission.score`/`passed` remain solely instructor-set via
+// `reviewSubmission`).
+// -----------------------------------------------------------------------------
+
+model PeerReview {
+  id           String     @id @default(uuid()) @db.Uuid
+  submissionId String     @map("submission_id") @db.Uuid
+  submission   Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  /// The reviewer's OWN enrollment in the same course — never the
+  /// submission's own enrollment (self-review is rejected at the
+  /// application layer, peer-review.service.ts).
+  reviewerEnrollmentId String     @map("reviewer_enrollment_id") @db.Uuid
+  reviewerEnrollment   Enrollment @relation(fields: [reviewerEnrollmentId], references: [id], onDelete: Cascade)
+
+  status PeerReviewStatus @default(PENDING)
+
+  comment    String? @db.Text
+  totalScore Int?    @map("total_score")
+
+  /// Set the moment a reviewer claims an open queue slot — this is what
+  /// caps concurrent claims at `Assignment.peerReviewsRequired` (count of
+  /// PENDING + SUBMITTED rows for a submission).
+  claimedAt   DateTime  @default(now()) @map("claimed_at") @db.Timestamptz(6)
+  submittedAt DateTime? @map("submitted_at") @db.Timestamptz(6)
+
+  /// Same non-destructive HIDE/RESTORE moderation pattern `CourseReview`
+  /// already established — a moderated-out peer review is never deleted,
+  /// only excluded from the learner-facing/instructor-facing reads.
+  moderationStatus PeerReviewModerationStatus @default(VISIBLE) @map("moderation_status")
+  moderatedBy      String?                    @map("moderated_by") @db.Uuid
+  moderatedAt      DateTime?                  @map("moderated_at") @db.Timestamptz(6)
+  moderationReason String?                    @map("moderation_reason") @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  criterionScores PeerReviewCriterionScore[]
+
+  /// One claim per (submission, reviewer) — a reviewer can't claim the
+  /// same submission twice.
+  @@unique([submissionId, reviewerEnrollmentId])
+  @@index([submissionId, status])
+  @@map("peer_reviews")
+}
+
+enum PeerReviewStatus {
+  PENDING
+  SUBMITTED
+  /// Reviewer excused by an instructor/admin (e.g. missed the deadline) —
+  /// frees the slot without pretending a review was ever submitted.
+  EXCUSED
+
+  @@map("peer_review_status")
+}
+
+enum PeerReviewModerationStatus {
+  VISIBLE
+  HIDDEN
+
+  @@map("peer_review_moderation_status")
+}
+
+model PeerReviewCriterionScore {
+  id           String     @id @default(uuid()) @db.Uuid
+  peerReviewId String     @map("peer_review_id") @db.Uuid
+  peerReview   PeerReview @relation(fields: [peerReviewId], references: [id], onDelete: Cascade)
+  criterionId  String     @map("criterion_id") @db.Uuid
+  /// Restrict, not Cascade — same reasoning as `SubmissionCriterionScore.criterion`.
+  criterion    RubricCriterion @relation(fields: [criterionId], references: [id], onDelete: Restrict)
+
+  pointsAwarded Int     @map("points_awarded")
+  comment       String? @db.Text
+
+  @@unique([peerReviewId, criterionId])
+  @@map("peer_review_criterion_scores")
 }
 
 // =============================================================================
@@ -2656,6 +2922,10 @@ model Enrollment {
   /// 004 US5 (Certificate System batch) — at most one certificate per
   /// enrollment (this batch only issues COURSE_COMPLETION certificates).
   certificate         Certificate?
+  /// 004 US9 (Peer Review batch) — the reviews THIS enrollment has
+  /// performed on OTHER learners' submissions (not reviews received on
+  /// its own submissions — those are reached via `Submission.peerReviews`).
+  peerReviewsGiven    PeerReview[]
 
   // NOTE: "one ACTIVE/PENDING enrollment per (userId, courseId)" is enforced
   // by a hand-added PARTIAL unique index in the migration (Prisma's DSL

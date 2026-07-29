@@ -33,7 +33,7 @@ const paginationQuery = z.object({
 });
 
 // --- Sort whitelists (never accept an arbitrary caller-supplied column) ---
-export const COURSE_SORT_VALUES = ['newest', 'title', 'featured'] as const;
+export const COURSE_SORT_VALUES = ['newest', 'title', 'featured', 'popular'] as const;
 export const CATEGORY_SORT_VALUES = ['sortOrder', 'name'] as const;
 
 /** 004 FR-015/FR-100 — see docs/lms/COURSE_LIFECYCLE.md for the reconciliation. */
@@ -112,6 +112,7 @@ export const adminCategoryQuerySchema = z.object({
 // ============================================================================
 
 const priceType = z.enum(['FREE', 'PAID']);
+export const COURSE_SEQUENCING_MODES = ['SEQUENTIAL', 'FLEXIBLE', 'HYBRID', 'INSTRUCTOR_CONTROLLED'] as const;
 
 const courseBodyBase = z
   .object({
@@ -149,6 +150,8 @@ const courseBodyBase = z
     seoTitle: z.string().max(255).optional(),
     seoDescription: z.string().max(500).optional(),
     canonicalUrl: z.string().max(500).optional(),
+    // 004 US6 polish batch (FR-034) — the authoring-time default new modules inherit; see schema.prisma's Course.sequencingMode doc comment.
+    sequencingMode: z.enum(COURSE_SEQUENCING_MODES).default('FLEXIBLE'),
     metadata: metadataSchema,
   })
   .refine((b) => b.priceType !== 'FREE' || b.priceAmountMinor === 0, {
@@ -203,6 +206,7 @@ export const updateCourseSchema = z.object({
       seoTitle: z.string().max(255).optional(),
       seoDescription: z.string().max(500).optional(),
       canonicalUrl: z.string().max(500).optional(),
+      sequencingMode: z.enum(COURSE_SEQUENCING_MODES).optional(),
       metadata: metadataSchema,
     })
     .refine((body) => Object.keys(body).length > 0, { message: 'Request body must not be empty' })
@@ -237,6 +241,10 @@ export const publicCourseQuerySchema = z.object({
     instructorId: uuid().optional(),
     featured: z.enum(['true', 'false']).optional(),
     priceType: priceType.optional(),
+    // 004 Discovery & Recommendations batch (FR-089).
+    certificateAvailable: z.enum(['true', 'false']).optional(),
+    maxDurationMinutes: z.coerce.number().int().min(1).max(100000).optional(),
+    format: z.enum(['VIDEO', 'AUDIO', 'ARTICLE', 'PDF', 'DOWNLOAD', 'EXTERNAL_LINK', 'EMBED']).optional(),
     sort: z.enum(COURSE_SORT_VALUES).default('newest'),
   }),
 });
@@ -302,7 +310,12 @@ const moduleBodyBase = z.object({
   isMandatory: z.boolean().default(true),
   isPreview: z.boolean().default(false),
   prerequisiteModuleId: uuid().nullable().optional(),
-  releaseRuleType: z.enum(MODULE_RELEASE_RULE_TYPES).default('IMMEDIATE'),
+  // 004 US6 polish batch: deliberately NO `.default()` here (unlike most
+  // other fields in this file) — when the caller omits this, the SERVICE
+  // layer (`module.service.ts`'s `deriveModuleSequencingDefaults`) decides
+  // the default from the course's `sequencingMode`, not a single hardcoded
+  // value. An explicitly-supplied value here always wins regardless.
+  releaseRuleType: z.enum(MODULE_RELEASE_RULE_TYPES).optional(),
   releaseRuleValue: metadataSchema,
   completionRuleType: z.enum(MODULE_COMPLETION_RULE_TYPES).default('MANUAL'),
   metadata: metadataSchema,

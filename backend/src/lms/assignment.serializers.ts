@@ -26,6 +26,11 @@ type AssignmentRow = {
   version: number;
   createdAt: Date;
   updatedAt: Date;
+  peerReviewEnabled: boolean;
+  peerReviewsRequired: number;
+  peerReviewAnonymous: boolean;
+  peerReviewDeadlineDays: number | null;
+  peerReviewIncludeInGrade: boolean;
 };
 
 type CriterionRow = { id: string; assignmentId: string; title: string; description: string | null; maxPoints: number; position: number };
@@ -48,6 +53,11 @@ export function toAdminAssignment(row: AssignmentRow): AdminAssignment {
     version: row.version,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    peerReviewEnabled: row.peerReviewEnabled,
+    peerReviewsRequired: row.peerReviewsRequired,
+    peerReviewAnonymous: row.peerReviewAnonymous,
+    peerReviewDeadlineDays: row.peerReviewDeadlineDays,
+    peerReviewIncludeInGrade: row.peerReviewIncludeInGrade,
   };
 }
 
@@ -72,6 +82,8 @@ export function toPublicAssignment(row: AssignmentRow): PublicAssignment {
     maxScore: row.maxScore,
     passingScore: row.passingScore,
     maxAttempts: row.maxAttempts,
+    peerReviewEnabled: row.peerReviewEnabled,
+    peerReviewsRequired: row.peerReviewsRequired,
   };
 }
 

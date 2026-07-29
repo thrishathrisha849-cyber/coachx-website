@@ -5,9 +5,11 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { CourseDetailPage } from '../CourseDetailPage';
 import * as lmsApi from '@/api/lms.api';
 import * as authContext from '@/context/auth.context';
+import * as courseReviewApi from '@/api/course-review.api';
 
 vi.mock('@/api/lms.api');
 vi.mock('@/context/auth.context');
+vi.mock('@/api/course-review.api');
 
 const sampleCourse = {
   id: 'course-1',
@@ -59,6 +61,10 @@ describe('CourseDetailPage — enroll CTA (004 US1)', () => {
     vi.mocked(lmsApi.fetchCourseBySlug).mockReset().mockResolvedValue(sampleCourse);
     vi.mocked(lmsApi.getMyCourseAccess).mockReset();
     vi.mocked(lmsApi.enrollInCourse).mockReset();
+    vi.mocked(courseReviewApi.getCourseReviews).mockReset().mockResolvedValue([]);
+    vi.mocked(courseReviewApi.getMyReviewEligibility).mockReset().mockResolvedValue({ eligible: false, reason: 'Not eligible yet.' });
+    vi.mocked(courseReviewApi.getMyCourseReview).mockReset().mockResolvedValue(null);
+    vi.mocked(courseReviewApi.submitCourseReview).mockReset();
   });
 
   it('prompts an unauthenticated visitor to log in rather than showing an enroll button', async () => {
@@ -101,5 +107,68 @@ describe('CourseDetailPage — enroll CTA (004 US1)', () => {
 
     expect(await screen.findByText('Your enrollment is currently suspended')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Enroll now' })).not.toBeInTheDocument();
+  });
+});
+
+describe('CourseDetailPage — reviews (004 Discovery & Recommendations batch, FR-087)', () => {
+  beforeEach(() => {
+    vi.mocked(lmsApi.fetchCourseBySlug).mockReset().mockResolvedValue(sampleCourse);
+    vi.mocked(lmsApi.getMyCourseAccess).mockReset();
+    vi.mocked(courseReviewApi.getCourseReviews).mockReset();
+    vi.mocked(courseReviewApi.getMyReviewEligibility).mockReset();
+    vi.mocked(courseReviewApi.getMyCourseReview).mockReset().mockResolvedValue(null);
+    vi.mocked(courseReviewApi.submitCourseReview).mockReset();
+  });
+
+  it('lists existing public reviews', async () => {
+    vi.mocked(authContext.useAuth).mockReturnValue({ isAuthenticated: false } as ReturnType<typeof authContext.useAuth>);
+    vi.mocked(courseReviewApi.getCourseReviews).mockResolvedValue([
+      { id: 'rev-1', reviewerName: 'Jordan Lee', rating: 5, title: null, comment: 'Great course!', outcome: null, wouldRecommend: true, createdAt: '2026-01-01T00:00:00.000Z' },
+    ]);
+
+    renderPage();
+
+    expect(await screen.findByText('Great course!')).toBeInTheDocument();
+  });
+
+  it('shows a write-review form when the server reports the learner eligible, and submits the rating', async () => {
+    vi.mocked(authContext.useAuth).mockReturnValue({ isAuthenticated: true } as ReturnType<typeof authContext.useAuth>);
+    vi.mocked(lmsApi.getMyCourseAccess).mockResolvedValue({ allowed: true });
+    vi.mocked(courseReviewApi.getCourseReviews).mockResolvedValue([]);
+    vi.mocked(courseReviewApi.getMyReviewEligibility).mockResolvedValue({ eligible: true });
+    vi.mocked(courseReviewApi.submitCourseReview).mockResolvedValue({
+      id: 'rev-1',
+      courseId: 'course-1',
+      rating: 4,
+      title: null,
+      comment: 'Solid',
+      outcome: null,
+      wouldRecommend: true,
+      isAnonymous: false,
+      status: 'VISIBLE',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText('Write a review');
+    await user.type(screen.getByPlaceholderText("Share your experience with this course…"), 'Solid');
+    await user.click(screen.getByRole('button', { name: 'Submit review' }));
+
+    await waitFor(() => expect(courseReviewApi.submitCourseReview).toHaveBeenCalledWith('course-1', { rating: 5, comment: 'Solid', wouldRecommend: true, isAnonymous: false }));
+  });
+
+  it('shows the ineligibility reason instead of the form when the learner is not yet eligible', async () => {
+    vi.mocked(authContext.useAuth).mockReturnValue({ isAuthenticated: true } as ReturnType<typeof authContext.useAuth>);
+    vi.mocked(lmsApi.getMyCourseAccess).mockResolvedValue({ allowed: true });
+    vi.mocked(courseReviewApi.getCourseReviews).mockResolvedValue([]);
+    vi.mocked(courseReviewApi.getMyReviewEligibility).mockResolvedValue({ eligible: false, reason: 'Complete at least 50% of this course before leaving a review (currently 0%).' });
+
+    renderPage();
+
+    expect(await screen.findByText(/Complete at least 50%/)).toBeInTheDocument();
+    expect(screen.queryByText('Write a review')).not.toBeInTheDocument();
   });
 });

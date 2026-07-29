@@ -12,6 +12,9 @@ export interface PublicAssignment {
   maxScore: number;
   passingScore: number;
   maxAttempts: number | null;
+  /** FR-076 — lets the learner UI know a peer-review queue exists for this assignment. */
+  peerReviewEnabled: boolean;
+  peerReviewsRequired: number;
 }
 
 export interface AdminRubricCriterion {
@@ -40,6 +43,12 @@ export interface AdminAssignment {
   version: number;
   createdAt: Date;
   updatedAt: Date;
+  /** FR-076 Peer Review config (004 US9 batch). */
+  peerReviewEnabled: boolean;
+  peerReviewsRequired: number;
+  peerReviewAnonymous: boolean;
+  peerReviewDeadlineDays: number | null;
+  peerReviewIncludeInGrade: boolean;
 }
 
 export interface AdminAssignmentWithRubric extends AdminAssignment {
