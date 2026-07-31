@@ -54,3 +54,6 @@ mobile/**/ios/.symlinks/
 
 # Docker
 *.pid
+
+# Local installers (must never be committed - large binaries)
+postgresql-18.4-2-windows-x64.exe
