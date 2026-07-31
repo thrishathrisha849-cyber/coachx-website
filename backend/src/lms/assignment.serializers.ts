@@ -5,6 +5,9 @@ import type {
   AdminSubmissionSummary,
   CriterionScoreResult,
   PublicAssignment,
+  PublicAssignmentWithRubric,
+  PublicRubricCriterion,
+  SubmissionFeedbackMessageResult,
   SubmissionResult,
   SubmissionWithScores,
 } from './assignment.types';
@@ -26,6 +29,7 @@ type AssignmentRow = {
   version: number;
   createdAt: Date;
   updatedAt: Date;
+  assessmentType: string;
   peerReviewEnabled: boolean;
   peerReviewsRequired: number;
   peerReviewAnonymous: boolean;
@@ -53,6 +57,7 @@ export function toAdminAssignment(row: AssignmentRow): AdminAssignment {
     version: row.version,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    assessmentType: row.assessmentType,
     peerReviewEnabled: row.peerReviewEnabled,
     peerReviewsRequired: row.peerReviewsRequired,
     peerReviewAnonymous: row.peerReviewAnonymous,
@@ -82,9 +87,18 @@ export function toPublicAssignment(row: AssignmentRow): PublicAssignment {
     maxScore: row.maxScore,
     passingScore: row.passingScore,
     maxAttempts: row.maxAttempts,
+    assessmentType: row.assessmentType,
     peerReviewEnabled: row.peerReviewEnabled,
     peerReviewsRequired: row.peerReviewsRequired,
   };
+}
+
+export function toPublicRubricCriterion(row: CriterionRow): PublicRubricCriterion {
+  return { id: row.id, title: row.title, description: row.description, maxPoints: row.maxPoints };
+}
+
+export function toPublicAssignmentWithRubric(assignment: AssignmentRow, criteria: CriterionRow[]): PublicAssignmentWithRubric {
+  return { ...toPublicAssignment(assignment), rubricCriteria: criteria.map(toPublicRubricCriterion) };
 }
 
 type SubmissionRow = {
@@ -98,7 +112,10 @@ type SubmissionRow = {
   isLate: boolean;
   score: number | null;
   passed: boolean | null;
+  outcomeLevel: string | null;
+  isSelfAssessed: boolean;
   learnerFeedback: string | null;
+  feedbackViewedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -115,9 +132,34 @@ export function toSubmissionResult(row: SubmissionRow): SubmissionResult {
     isLate: row.isLate,
     score: row.score,
     passed: row.passed,
+    outcomeLevel: row.outcomeLevel,
+    isSelfAssessed: row.isSelfAssessed,
     learnerFeedback: row.learnerFeedback,
+    feedbackViewedAt: row.feedbackViewedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+  };
+}
+
+type FeedbackMessageRow = {
+  id: string;
+  submissionId: string;
+  authorId: string;
+  authorRole: string;
+  type: string;
+  body: string;
+  createdAt: Date;
+};
+
+export function toSubmissionFeedbackMessage(row: FeedbackMessageRow): SubmissionFeedbackMessageResult {
+  return {
+    id: row.id,
+    submissionId: row.submissionId,
+    authorId: row.authorId,
+    authorRole: row.authorRole as SubmissionFeedbackMessageResult['authorRole'],
+    type: row.type as SubmissionFeedbackMessageResult['type'],
+    body: row.body,
+    createdAt: row.createdAt,
   };
 }
 

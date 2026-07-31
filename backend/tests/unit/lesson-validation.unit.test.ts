@@ -15,7 +15,11 @@ describe('lesson.validation — createLessonSchema', () => {
     const result = createLessonSchema.parse(base);
     expect(result.body.isPreview).toBe(false);
     expect(result.body.isMandatory).toBe(true);
-    expect(result.body.completionRuleType).toBe('MANUAL');
+    // 004 LMS-wide Settings batch (FR-114): `completionRuleType` is no
+    // longer defaulted here — `lesson.service.ts`'s `createCourseLesson`
+    // now sources the fallback from the admin-configurable
+    // `LmsSettings.defaultLessonCompletionRuleType` instead.
+    expect(result.body.completionRuleType).toBeUndefined();
   });
 
   it('rejects an invalid slug format', () => {

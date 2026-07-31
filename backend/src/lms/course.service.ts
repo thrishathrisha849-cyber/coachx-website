@@ -26,7 +26,9 @@ import {
 import { findVisibleModulesByCourse } from './module.repository';
 import { toAdminCourse, toPublicCourse, toPublicCourseWithModules } from './lms.serializers';
 import type { AdminCourse, PublicCourse, PublicCourseWithModules } from './lms.types';
-import { snapshotCourseIfPublished } from './course-version.service';
+import { snapshotCourseIfPublished, type CourseVersionPolicyInput } from './course-version.service';
+import { SELF_ENROLL_ALLOWED_STATUSES } from './enrollment.service';
+import { notifyWishlistersOfEnrollmentOpen, notifyWishlistersOfPriceDrop, resetWishlistEnrollmentOpenFlags } from './wishlist.service';
 
 export interface CourseInput {
   title: string;
@@ -72,6 +74,10 @@ export type CourseUpdateInput = Partial<CourseInput> & {
   enrollmentEndAt?: string | null;
   publishAt?: string | null;
   expireAt?: string | null;
+  /** 004 Course Versioning Policy batch (FR-099) — attached to the CourseVersion snapshot this edit fires, if any (only a PUBLISHED course actually takes a snapshot). */
+  versionChangeSummary?: string;
+  versionEffectiveDate?: string;
+  versionExistingLearnerPolicy?: 'CONTINUE_CURRENT_VERSION' | 'OPTIONAL_MIGRATION' | 'MANDATORY_MIGRATION';
 };
 
 function toDate(value?: string | null): Date | null | undefined {
@@ -142,7 +148,8 @@ export async function updateExistingCourse(
   input: CourseUpdateInput,
   actorId: string,
 ): Promise<AdminCourse> {
-  return withTransaction(async (tx) => {
+  let priceBeforeUpdate = 0;
+  const updated = await withTransaction(async (tx) => {
     const existing = await findCourseById(id, tx);
     if (!existing) throw AppError.notFound('Course not found');
     if (existing.status === 'ARCHIVED' || existing.status === 'RETIRED') {
@@ -151,7 +158,16 @@ export async function updateExistingCourse(
 
     // 001 FR-099 — snapshot the PRIOR state before overwriting, but only
     // when it was actually published (nothing to preserve for a draft).
-    await snapshotCourseIfPublished(existing, actorId, tx);
+    // 004 Course Versioning Policy batch — the admin's own changeSummary/
+    // effectiveDate/existingLearnerPolicy for THIS edit are attached to
+    // the same snapshot row, when one is actually taken.
+    const versionPolicy: CourseVersionPolicyInput = {
+      changeSummary: input.versionChangeSummary,
+      effectiveDate: input.versionEffectiveDate ? new Date(input.versionEffectiveDate) : undefined,
+      existingLearnerPolicy: input.versionExistingLearnerPolicy,
+    };
+    await snapshotCourseIfPublished(existing, actorId, tx, versionPolicy);
+    priceBeforeUpdate = existing.priceAmountMinor;
 
     const updated = await updateCourse(
       id,
@@ -217,8 +233,17 @@ export async function updateExistingCourse(
       tx,
     );
 
-    return toAdminCourse(updated);
+    return updated;
   });
+
+  // 004 Wishlist batch (FR-027 "price-drop alert") — a real email fired
+  // from the actual price-edit action point, best-effort (never blocks
+  // the edit itself, which has already committed by this point).
+  if (input.priceAmountMinor !== undefined && input.priceAmountMinor < priceBeforeUpdate) {
+    await notifyWishlistersOfPriceDrop(id, updated.title, input.priceAmountMinor);
+  }
+
+  return toAdminCourse(updated);
 }
 
 /**
@@ -235,7 +260,8 @@ export async function changeCourseStatus(
   actorId: string,
   reviewNote?: string,
 ): Promise<AdminCourse> {
-  return withTransaction(async (tx) => {
+  let reopenedFromPause = false;
+  const updated = await withTransaction(async (tx) => {
     const existing = await findCourseById(id, tx);
     if (!existing) throw AppError.notFound('Course not found');
 
@@ -268,6 +294,17 @@ export async function changeCourseStatus(
     const isFirstPublish = newStatus === 'PUBLISHED' && !existing.publishedAt;
     const clearsReviewNotes = newStatus === 'DRAFT' || newStatus === 'SUBMITTED_FOR_REVIEW';
 
+    // 004 Wishlist batch (FR-027 "enrollment-open alert") — the real
+    // action point: a course leaving ENROLLMENT_PAUSED for a self-
+    // enrollable status is the exact moment a wishlisted "locked" course
+    // becomes available. Re-entering ENROLLMENT_PAUSED resets the
+    // notified flag (a plain in-transaction data reset, not an email) so
+    // a future re-open notifies again.
+    reopenedFromPause = existing.status === 'ENROLLMENT_PAUSED' && SELF_ENROLL_ALLOWED_STATUSES.has(newStatus);
+    if (newStatus === 'ENROLLMENT_PAUSED') {
+      await resetWishlistEnrollmentOpenFlags(id, tx);
+    }
+
     const updated = await updateCourse(
       id,
       {
@@ -298,8 +335,14 @@ export async function changeCourseStatus(
       tx,
     );
 
-    return toAdminCourse(updated);
+    return updated;
   });
+
+  if (reopenedFromPause) {
+    await notifyWishlistersOfEnrollmentOpen(id, updated.title);
+  }
+
+  return toAdminCourse(updated);
 }
 
 export async function archiveCourse(id: string, actorId: string): Promise<AdminCourse> {

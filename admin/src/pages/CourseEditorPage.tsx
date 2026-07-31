@@ -16,11 +16,15 @@ import {
   listCategoriesAdmin,
   cloneCourse,
   COURSE_CLONE_MODES,
+  setTranslationStatusAdmin,
+  getTranslationVariantsAdmin,
   type AdminCourseFull,
   type AdminCourseInstructor,
   type AdminCourseModuleFull,
   type AdminCourseCategory,
   type CourseCloneMode,
+  type CourseTranslationStatus,
+  type CourseVersionExistingLearnerPolicy,
 } from '@/api/lms.api';
 import type { NormalizedApiError } from '@/api/client';
 
@@ -79,6 +83,24 @@ export function CourseEditorPage() {
         <button onClick={() => navigate(`/lms-courses/${id}/analytics`)} className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:border-brand-400 dark:border-slate-700 dark:text-slate-200">
           Analytics &amp; at-risk learners
         </button>
+        <button onClick={() => navigate(`/lms-courses/${id}/announcements`)} className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:border-brand-400 dark:border-slate-700 dark:text-slate-200">
+          Announcements
+        </button>
+        <button onClick={() => navigate(`/lms-courses/${id}/waitlist`)} className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:border-brand-400 dark:border-slate-700 dark:text-slate-200">
+          Waitlist
+        </button>
+        <button onClick={() => navigate(`/lms-courses/${id}/calendar`)} className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:border-brand-400 dark:border-slate-700 dark:text-slate-200">
+          Calendar
+        </button>
+        <button onClick={() => navigate(`/lms-courses/${id}/cohorts`)} className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:border-brand-400 dark:border-slate-700 dark:text-slate-200">
+          Cohorts
+        </button>
+        <button onClick={() => navigate(`/lms-courses/${id}/question-bank`)} className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:border-brand-400 dark:border-slate-700 dark:text-slate-200">
+          Question bank
+        </button>
+        <button onClick={() => navigate(`/lms-courses/${id}/versions`)} className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:border-brand-400 dark:border-slate-700 dark:text-slate-200">
+          Version history
+        </button>
         <button onClick={() => navigate('/course-certificates')} className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:border-brand-400 dark:border-slate-700 dark:text-slate-200">
           View certificates
         </button>
@@ -90,6 +112,7 @@ export function CourseEditorPage() {
       <InstructorsSection courseId={id} onError={setError} />
       <ModulesSection courseId={id} onError={setError} />
       <CloneSection courseId={id} onError={setError} />
+      <TranslationSection course={course} onChanged={load} onError={setError} />
     </div>
   );
 }
@@ -98,7 +121,7 @@ const CLONE_MODE_LABELS: Record<CourseCloneMode, string> = {
   FULL: 'Full clone (everything except enrollments/progress/financial data)',
   CURRICULUM_ONLY: 'Curriculum only (modules/lessons structure, no activities/assessments)',
   CONTENT_WITHOUT_ENROLLMENTS: 'Content without enrollments (everything except instructors)',
-  ASSESSMENT_BANK: 'Assessment bank (not yet supported — see below)',
+  ASSESSMENT_BANK: 'Assessment bank (question bank items only, no curriculum/certificate settings)',
   CERTIFICATE_SETTINGS: 'Certificate settings only (empty course pre-configured with the source certificate)',
   TRANSLATION_VARIANT: 'Translation variant (linked to the source as a language variant)',
 };
@@ -149,8 +172,8 @@ function CloneSection({ courseId, onError }: { courseId: string; onError: (e: st
           </select>
         </label>
         {mode === 'ASSESSMENT_BANK' && (
-          <p className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
-            Not yet supported — quizzes/assignments in this codebase belong to a specific lesson, not a reusable cross-course question bank.
+          <p className="rounded-md border border-slate-200 bg-slate-50 p-2 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+            Copies only this course's question bank items into a new, empty draft course — no modules, lessons, activities, quizzes, or certificate settings carry over.
           </p>
         )}
         <div className="flex gap-3">
@@ -176,7 +199,7 @@ function CloneSection({ courseId, onError }: { courseId: string; onError: (e: st
         )}
         <button
           onClick={handleClone}
-          disabled={cloning || !slug.trim() || mode === 'ASSESSMENT_BANK'}
+          disabled={cloning || !slug.trim()}
           className="self-start rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-60"
         >
           {cloning ? 'Cloning…' : 'Clone course'}
@@ -257,6 +280,14 @@ function MetadataSection({
   const [sequencingMode, setSequencingMode] = useState(course.sequencingMode);
   const [saving, setSaving] = useState(false);
 
+  // 004 Course Versioning Policy batch (FR-099) — only actually recorded
+  // when this edit fires a snapshot (i.e. the course is currently
+  // PUBLISHED); harmless to fill in otherwise, the backend simply has
+  // nothing to attach them to yet.
+  const [versionChangeSummary, setVersionChangeSummary] = useState('');
+  const [versionEffectiveDate, setVersionEffectiveDate] = useState('');
+  const [versionExistingLearnerPolicy, setVersionExistingLearnerPolicy] = useState<CourseVersionExistingLearnerPolicy>('CONTINUE_CURRENT_VERSION');
+
   async function handleSave() {
     setSaving(true);
     onError(null);
@@ -272,7 +303,13 @@ function MetadataSection({
         certificateAvailable,
         isFeatured,
         sequencingMode,
+        versionChangeSummary: versionChangeSummary.trim() || undefined,
+        versionEffectiveDate: versionEffectiveDate ? new Date(versionEffectiveDate).toISOString() : undefined,
+        versionExistingLearnerPolicy,
       });
+      setVersionChangeSummary('');
+      setVersionEffectiveDate('');
+      setVersionExistingLearnerPolicy('CONTINUE_CURRENT_VERSION');
       onChanged();
     } catch (err) {
       onError((err as NormalizedApiError).message ?? 'Could not save course.');
@@ -362,6 +399,46 @@ function MetadataSection({
           </label>
           <p className="mt-1 text-xs text-slate-400">Applies to newly-created modules only — does not change any existing module.</p>
         </div>
+
+        <div className="rounded-md border border-dashed border-slate-300 p-3 dark:border-slate-700">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Version note (FR-099)</p>
+          <p className="mt-1 text-xs text-slate-400">
+            Only recorded if this course is currently Published — saving then creates a new version snapshot carrying these fields.
+          </p>
+          <label className="mt-2 block text-sm">
+            Change summary
+            <input
+              value={versionChangeSummary}
+              onChange={(e) => setVersionChangeSummary(e.target.value)}
+              placeholder="What changed in this version?"
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm font-normal normal-case dark:border-slate-700 dark:bg-slate-900"
+            />
+          </label>
+          <div className="mt-2 flex gap-3">
+            <label className="flex-1 text-sm">
+              Effective date
+              <input
+                type="datetime-local"
+                value={versionEffectiveDate}
+                onChange={(e) => setVersionEffectiveDate(e.target.value)}
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm font-normal normal-case dark:border-slate-700 dark:bg-slate-900"
+              />
+            </label>
+            <label className="flex-1 text-sm">
+              Existing-learner policy
+              <select
+                value={versionExistingLearnerPolicy}
+                onChange={(e) => setVersionExistingLearnerPolicy(e.target.value as CourseVersionExistingLearnerPolicy)}
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm font-normal normal-case dark:border-slate-700 dark:bg-slate-900"
+              >
+                <option value="CONTINUE_CURRENT_VERSION">Continue on current version</option>
+                <option value="OPTIONAL_MIGRATION">Optional migration</option>
+                <option value="MANDATORY_MIGRATION">Mandatory migration</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
         <button onClick={handleSave} disabled={saving || !title.trim()} className="self-start rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-60">
           {saving ? 'Saving…' : 'Save changes'}
         </button>
@@ -532,6 +609,94 @@ function ModulesSection({ courseId, onError }: { courseId: string; onError: (e: 
           + Add module
         </button>
       </div>
+    </section>
+  );
+}
+
+/** 004 Course Translation Management batch (FR-101) — mirrors `course-translation.service.ts`'s manual transition map exactly (OUTDATED is never a manually selectable target — the system sets it automatically). */
+const TRANSLATION_MANUAL_TRANSITIONS: Record<string, string[]> = {
+  NOT_STARTED: ['IN_PROGRESS'],
+  IN_PROGRESS: ['REVIEW'],
+  REVIEW: ['APPROVED', 'IN_PROGRESS'],
+  APPROVED: ['PUBLISHED', 'IN_PROGRESS'],
+  PUBLISHED: ['IN_PROGRESS'],
+  OUTDATED: ['IN_PROGRESS'],
+};
+
+/** Section shown on every course: if THIS course is itself a translation variant, its own status + transition buttons; always, the list of any variants of THIS course (as a source), each showing its own status. */
+function TranslationSection({ course, onChanged, onError }: { course: AdminCourseFull; onChanged: () => void; onError: (e: string | null) => void }) {
+  const [variants, setVariants] = useState<AdminCourseFull[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    getTranslationVariantsAdmin(course.id)
+      .then(setVariants)
+      .catch(() => setVariants([]));
+  }, [course.id]);
+
+  async function handleTransition(status: CourseTranslationStatus) {
+    if (status === 'OUTDATED') return;
+    setBusy(true);
+    onError(null);
+    try {
+      await setTranslationStatusAdmin(course.id, status);
+      onChanged();
+    } catch (err) {
+      onError((err as NormalizedApiError).message ?? 'Could not change translation status.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="mt-6 rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+      <h2 className="font-semibold text-slate-900 dark:text-white">Translation</h2>
+
+      {course.translationOfCourseId && course.translationStatus && (
+        <div className="mt-2">
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            This course is a translation variant. Status:{' '}
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+              {course.translationStatus}
+            </span>
+          </p>
+          <div className="mt-2 flex gap-2">
+            {(TRANSLATION_MANUAL_TRANSITIONS[course.translationStatus] ?? []).map((next) => (
+              <button
+                key={next}
+                disabled={busy}
+                onClick={() => handleTransition(next as CourseTranslationStatus)}
+                className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:border-brand-400 dark:border-slate-700 dark:text-slate-200"
+              >
+                Move to {next}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <h3 className="mt-4 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+        Translation variants of this course ({variants.length})
+      </h3>
+      <ul className="mt-2 flex flex-col gap-2">
+        {variants.map((v) => (
+          <li key={v.id} className="flex items-center justify-between rounded-md border border-slate-200 p-2 text-sm dark:border-slate-800">
+            <span className="text-slate-700 dark:text-slate-200">
+              {v.title} <span className="text-xs text-slate-400">({v.language})</span>
+            </span>
+            <span
+              className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                v.translationStatus === 'OUTDATED'
+                  ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300'
+                  : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+              }`}
+            >
+              {v.translationStatus}
+            </span>
+          </li>
+        ))}
+        {variants.length === 0 && <p className="text-sm text-slate-400">No translation variants yet.</p>}
+      </ul>
     </section>
   );
 }

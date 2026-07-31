@@ -7,6 +7,9 @@ import { beginIdempotentOperation } from '../database/idempotency.service';
 import { recordLearningEvent } from './learning-event.service';
 import { parsePaginationParams, buildPaginationMeta } from '../database/pagination';
 import type { PaginationMeta } from '@coachx/shared';
+import { getPrismaClient } from '../database/prisma-client';
+import { getEmailAdapter } from '../auth/email.port';
+import { logger } from '../utils/logger';
 import { findCourseById } from './course.repository';
 import { evaluateEntitlement } from './entitlement.service';
 import { assertValidEnrollmentTransition } from './enrollment.policy';
@@ -22,8 +25,11 @@ import {
   updateEnrollment,
   type AdminEnrollmentFilter,
 } from './enrollment.repository';
+import { countActiveOffersExcludingUser } from './waitlist.repository';
+import { sweepAndAdvanceWaitlist } from './waitlist.service';
 import { toAdminEnrollment } from './enrollment.serializers';
 import type { AdminEnrollment, MyEnrollment } from './enrollment.types';
+import type { AccessDenialReason, LmsBusinessRuleCode } from './lms-error-codes';
 
 // Course statuses that never accept a NEW enrollment, regardless of who is
 // creating it (004 FR-015: Archived/Retired both exclude new enrollment;
@@ -34,7 +40,11 @@ const NO_NEW_ENROLLMENT_STATUSES = new Set(['ARCHIVED', 'RETIRED', 'ENROLLMENT_P
 // direct-link) — an admin MAY grant access to a not-yet-published course
 // (e.g. instructor/QA preview access) as a deliberately more permissive
 // admin-only capability.
-const SELF_ENROLL_ALLOWED_STATUSES = new Set(['PUBLISHED', 'SCHEDULED', 'UNLISTED']);
+// Exported for reuse by `wishlist.service.ts`'s "is this course now
+// self-enrollable" read-time check (FR-027's "enrollment-open" state) —
+// the single source of truth for which statuses actually accept a
+// self-enroll, never a second, driftable copy of this literal set.
+export const SELF_ENROLL_ALLOWED_STATUSES = new Set(['PUBLISHED', 'SCHEDULED', 'UNLISTED']);
 
 interface CreateEnrollmentOptions {
   accessStartAt?: Date;
@@ -51,12 +61,19 @@ async function createEnrollmentInternal(
   isAdminActor: boolean,
   options: CreateEnrollmentOptions = {},
 ): Promise<AdminEnrollment> {
-  return withTransaction(async (tx) => {
+  let courseTitleForNotification: string | null = null;
+
+  const result = await withTransaction(async (tx) => {
     const course = await findCourseById(courseId, tx);
     if (!course) throw AppError.notFound('Course not found');
 
     if (NO_NEW_ENROLLMENT_STATUSES.has(course.status)) {
-      throw AppError.badRequest(`Course is not accepting new enrollment (status: ${course.status})`, { code: 'COURSE_UNAVAILABLE' });
+      // 004 Error-code taxonomy batch (FR-125) — `COURSE_UNAVAILABLE` is
+      // already a member of the centralized `AccessDenialReason` family
+      // (`lms-error-codes.ts`); typed here for compile-time membership
+      // checking rather than an unchecked string literal.
+      const code: AccessDenialReason = 'COURSE_UNAVAILABLE';
+      throw AppError.badRequest(`Course is not accepting new enrollment (status: ${course.status})`, { code });
     }
     if (!isAdminActor && !SELF_ENROLL_ALLOWED_STATUSES.has(course.status)) {
       throw AppError.notFound('Course not found');
@@ -76,17 +93,23 @@ async function createEnrollmentInternal(
     // from Part 1 but was never read by any Part 2 code path — CORRECTED
     // here: a course with a configured limit rejects a new enrollment once
     // that many seats are occupied (see `countSeatOccupyingEnrollments`'s
-    // doc comment for exactly which statuses count as a seat). A full
-    // Waitlist entity (join date/priority/notification/time-limited offer,
-    // FR-029) is a genuinely separate, larger feature and remains DEFERRED
-    // — see docs/lms/DECISION_GATES.md and TRACEABILITY_PART2.md — but the
-    // capacity REJECTION itself is simple, spec-grounded, and was not
-    // reasonable to leave unimplemented once `enrollmentLimit` already
-    // existed as a field with nothing reading it.
+    // doc comment for exactly which statuses count as a seat).
+    //
+    // 004 Waitlist batch (FR-029) — a live (unexpired) waitlist OFFER
+    // reservation held by someone ELSE also counts against capacity here,
+    // so the seat stays genuinely reserved for its offer-holder rather
+    // than being a race any other direct-enroll caller could win first;
+    // the offer-holder's OWN claim (via `waitlist.service.ts`'s
+    // `claimWaitlistOffer`, which itself calls `selfEnroll`) correctly
+    // excludes their own reservation from this count.
     if (course.enrollmentLimit !== null) {
       const occupied = await countSeatOccupyingEnrollments(courseId, tx);
-      if (occupied >= course.enrollmentLimit) {
-        throw AppError.conflict('This course has reached its enrollment capacity', { code: 'COURSE_FULL' });
+      const reservedForOthers = await countActiveOffersExcludingUser(courseId, userId, tx);
+      if (occupied + reservedForOthers >= course.enrollmentLimit) {
+        // 004 Error-code taxonomy batch (FR-125) — `COURSE_FULL` is a
+        // member of the business-rule-rejection family (`lms-error-codes.ts`).
+        const code: LmsBusinessRuleCode = 'COURSE_FULL';
+        throw AppError.conflict('This course has reached its enrollment capacity', { code });
       }
     }
 
@@ -142,8 +165,37 @@ async function createEnrollmentInternal(
       tx,
     );
 
+    // Only a genuinely NEW enrollment (not the `existingOpen` early-return
+    // above) triggers FR-025's "send notification and email" — re-hitting
+    // this path for an already-open enrollment must never resend the
+    // confirmation.
+    courseTitleForNotification = course.title;
+
     return toAdminEnrollment(enrollment);
   });
+
+  // FR-025 "...create enrollment record → initialize course progress →
+  // open welcome lesson/overview → send notification and email → update
+  // dashboard." Best-effort, same pattern as the certificate/announcement/
+  // waitlist/wishlist emails: sent AFTER the transaction commits, never
+  // blocks or rolls back the enrollment itself if delivery fails.
+  if (courseTitleForNotification) {
+    try {
+      const prisma = getPrismaClient();
+      const user = await prisma?.user.findUnique({ where: { id: userId } });
+      if (user) {
+        await getEmailAdapter().send({
+          to: user.email,
+          subject: `You're enrolled in "${courseTitleForNotification}"`,
+          text: `You're now enrolled in "${courseTitleForNotification}". Head to your CoachX dashboard to get started.`,
+        });
+      }
+    } catch (err) {
+      logger.warn('Enrollment-confirmation email delivery failed', { courseId, userId, error: err instanceof Error ? err.message : err });
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -301,6 +353,20 @@ async function transitionEnrollment(
       },
       tx,
     );
+
+    // 004 Waitlist batch (FR-028/029) — REVOKED/CANCELLED/EXPIRED are
+    // exactly the seat-releasing transitions (the complement of
+    // `countSeatOccupyingEnrollments`'s own PENDING/ACTIVE/SUSPENDED/
+    // COMPLETED set); SUSPENDED does NOT release a seat (still counted as
+    // occupying). This is the single real "a seat freed" hook in this
+    // codebase today — only `revokeEnrollment` (admin action) actually
+    // calls it; CANCELLED/EXPIRED exist in the transition map but have no
+    // real caller yet (no self-service cancel, no automatic expiry-status-
+    // flip), so wiring the hook at this shared choke point means they'll
+    // correctly trigger a waitlist advance too the moment either becomes real.
+    if (['REVOKED', 'CANCELLED', 'EXPIRED'].includes(newStatus)) {
+      await sweepAndAdvanceWaitlist(existing.courseId, tx);
+    }
 
     return toAdminEnrollment(updated);
   });

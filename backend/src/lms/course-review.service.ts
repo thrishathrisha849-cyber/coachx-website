@@ -15,31 +15,31 @@ import {
   aggregateVisibleRatings,
 } from './course-review.repository';
 import { toPublicCourseReview, toMyCourseReview, toAdminCourseReview } from './course-review.serializers';
+import { findOrCreateLmsSettings } from './lms-settings.repository';
 import type { AdminCourseReview, MyCourseReview, PublicCourseReview, ReviewEligibility } from './course-review.types';
 import type { TransactionClient } from '../database/transaction';
 
 /**
  * FR-087 "minimum progress threshold" — this codebase has no per-course
- * configurable review-eligibility field, so a single documented global
- * default is used (the same "instructor-configurable value, or else a
- * documented default" resolution pattern `LessonCompletionRuleType.
- * MINIMUM_WATCH_PERCENT`'s 80% default already established for FR-041).
+ * configurable review-eligibility field, so a single admin-configurable
+ * global default is used (004 LMS-wide Settings batch, FR-114 "course
+ * rating eligibility" — `LmsSettings.courseReviewMinProgressPercent`,
+ * previously a hardcoded `REVIEW_MIN_PROGRESS_PERCENT = 50` constant here).
  * A learner who has fully completed the course is always eligible
  * regardless of this threshold.
  */
-export const REVIEW_MIN_PROGRESS_PERCENT = 50;
-
 export async function evaluateReviewEligibility(userId: string, courseId: string): Promise<ReviewEligibility> {
   const enrollment = await findEnrollmentForUserAndCourse(userId, courseId);
   if (!enrollment) return { eligible: false, reason: 'You must be enrolled in this course to leave a review.' };
   if (enrollment.status === 'COMPLETED') return { eligible: true };
 
   const progress = await computeCourseProgress(enrollment.id, courseId);
-  if (progress.percentage >= REVIEW_MIN_PROGRESS_PERCENT) return { eligible: true };
+  const settings = await findOrCreateLmsSettings();
+  if (progress.percentage >= settings.courseReviewMinProgressPercent) return { eligible: true };
 
   return {
     eligible: false,
-    reason: `Complete at least ${REVIEW_MIN_PROGRESS_PERCENT}% of this course before leaving a review (currently ${progress.percentage}%).`,
+    reason: `Complete at least ${settings.courseReviewMinProgressPercent}% of this course before leaving a review (currently ${progress.percentage}%).`,
   };
 }
 

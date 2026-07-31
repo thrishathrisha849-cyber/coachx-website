@@ -2,6 +2,7 @@ import { getPrismaClient } from '../database/prisma-client';
 import { AppError } from '../utils/app-error';
 import { listPublicCoursesForDiscovery } from './course.service';
 import { getRecommendationsForLearner } from './recommendation.service';
+import { listMyWishlist } from './wishlist.service';
 import type { CatalogCourseCard, CatalogSection } from './catalog.types';
 import type { PublicCourse } from './lms.types';
 import type { RecommendationItem } from './recommendation.service';
@@ -106,6 +107,23 @@ async function buildRecommendedSection(userId: string): Promise<CatalogSection<R
   return result.items.length > 0 ? { status: 'ok', data: result.items } : emptySection('No recommendations yet — keep learning to unlock personalized suggestions.');
 }
 
+/** 004 Wishlist batch (FR-027) — closes part of FR-090's own "wishlist" section, previously honestly reported unavailable (no Wishlist entity existed yet). Card state is always LOCKED, since a wishlist entry only exists for an "eligible-but-locked" course by construction (see `wishlist.service.ts`'s own eligibility gate). */
+async function buildWishlistSection(userId: string): Promise<CatalogSection<CatalogCourseCard[]>> {
+  const entries = await listMyWishlist(userId);
+  if (entries.length === 0) return emptySection('No courses saved to your wishlist yet.');
+
+  const cards: CatalogCourseCard[] = entries.slice(0, SECTION_SIZE).map((e) => ({
+    courseId: e.courseId,
+    courseTitle: e.courseTitle,
+    courseSlug: e.courseSlug,
+    thumbnailUrl: e.courseThumbnailUrl,
+    priceType: e.coursePriceType,
+    certificateAvailable: e.courseCertificateAvailable,
+    cardState: 'LOCKED',
+  }));
+  return { status: 'ok', data: cards };
+}
+
 export interface MemberCatalog {
   continueLearning: CatalogSection<CatalogCourseCard[]>;
   recommended: CatalogSection<RecommendationItem[]>;
@@ -113,21 +131,22 @@ export interface MemberCatalog {
   popular: CatalogSection<CatalogCourseCard[]>;
   free: CatalogSection<CatalogCourseCard[]>;
   completed: CatalogSection<CatalogCourseCard[]>;
-  /** FR-090 names these three sections too — none has an owning entity in this codebase yet (no LearningPath — see T004; no Wishlist — see T024; no Membership-gated content — Volume 09). Honestly reported empty, never fabricated. */
+  wishlist: CatalogSection<CatalogCourseCard[]>;
+  /** FR-090 names these two sections too — neither has an owning entity in this codebase yet (no LearningPath — see T004; no Membership-gated content — Volume 09). Honestly reported empty, never fabricated. */
   learningPaths: CatalogSection<never>;
-  wishlist: CatalogSection<never>;
   includedInMembership: CatalogSection<never>;
 }
 
 /** FR-090 — the member course catalog view, sectioned. Every section either reflects a real signal or is honestly reported unavailable via a reason string — never a fabricated placeholder list. */
 export async function getMemberCatalog(userId: string): Promise<MemberCatalog> {
-  const [continueLearning, recommended, newCourses, popular, free, completed] = await Promise.all([
+  const [continueLearning, recommended, newCourses, popular, free, completed, wishlist] = await Promise.all([
     buildContinueLearningSection(userId),
     buildRecommendedSection(userId),
     buildDiscoverySection(userId, 'newest'),
     buildDiscoverySection(userId, 'popular'),
     buildDiscoverySection(userId, 'newest', 'FREE'),
     buildCompletedSection(userId),
+    buildWishlistSection(userId),
   ]);
 
   return {
@@ -137,8 +156,8 @@ export async function getMemberCatalog(userId: string): Promise<MemberCatalog> {
     popular,
     free,
     completed,
+    wishlist,
     learningPaths: emptySection('Learning paths are not available yet.'),
-    wishlist: emptySection('Wishlist is not available yet.'),
     includedInMembership: emptySection('Membership-included courses are not available yet.'),
   };
 }

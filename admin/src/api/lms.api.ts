@@ -150,6 +150,9 @@ export interface AdminCourseFull {
   updatedAt: string;
   /** 004 US6 polish batch (FR-034) — the authoring-time default new modules inherit. */
   sequencingMode: string;
+  /** 004 Course Translation Management batch (FR-101) — null on every ordinary, non-variant course. */
+  translationOfCourseId: string | null;
+  translationStatus: string | null;
 }
 
 export interface CreateCourseInput {
@@ -224,6 +227,44 @@ export async function cloneCourse(id: string, input: CloneCourseInput): Promise<
 
 export async function restoreCourseAdmin(id: string): Promise<void> {
   await apiClient.post(`/lms/admin/courses/${id}/restore`);
+}
+
+// ============================================================================
+// Course Translation Management (004 batch, FR-101)
+// ============================================================================
+
+export const COURSE_TRANSLATION_STATUSES = ['NOT_STARTED', 'IN_PROGRESS', 'REVIEW', 'APPROVED', 'PUBLISHED'] as const;
+export type CourseTranslationStatus = (typeof COURSE_TRANSLATION_STATUSES)[number] | 'OUTDATED';
+
+export async function setTranslationStatusAdmin(id: string, status: (typeof COURSE_TRANSLATION_STATUSES)[number]): Promise<AdminCourseFull> {
+  const { data } = await apiClient.post<ApiSuccessResponse<AdminCourseFull>>(`/lms/admin/courses/${id}/translation-status`, { status });
+  return data.data;
+}
+
+export async function getTranslationVariantsAdmin(id: string): Promise<AdminCourseFull[]> {
+  const { data } = await apiClient.get<ApiSuccessResponse<AdminCourseFull[]>>(`/lms/admin/courses/${id}/translations`);
+  return data.data;
+}
+
+// --- Course Versioning Policy (004, FR-099) ---------------------------------
+
+export const COURSE_VERSION_EXISTING_LEARNER_POLICIES = ['CONTINUE_CURRENT_VERSION', 'OPTIONAL_MIGRATION', 'MANDATORY_MIGRATION'] as const;
+export type CourseVersionExistingLearnerPolicy = (typeof COURSE_VERSION_EXISTING_LEARNER_POLICIES)[number];
+
+export interface AdminCourseVersion {
+  id: string;
+  courseId: string;
+  versionNumber: number;
+  changeSummary: string | null;
+  effectiveDate: string | null;
+  existingLearnerPolicy: CourseVersionExistingLearnerPolicy;
+  createdBy: string | null;
+  createdAt: string;
+}
+
+export async function getCourseVersionsAdmin(courseId: string): Promise<AdminCourseVersion[]> {
+  const { data } = await apiClient.get<ApiSuccessResponse<AdminCourseVersion[]>>(`/lms/admin/courses/${courseId}/versions`);
+  return data.data;
 }
 
 // --- Instructors ------------------------------------------------------------
@@ -391,6 +432,12 @@ export async function restoreLesson(lessonId: string): Promise<void> {
 // Learning Activities
 // ============================================================================
 
+/** 004 Captions + Transcript Support batch (FR-044/FR-046) — one ordered segment of a VIDEO/AUDIO activity's transcript. */
+export interface TranscriptSegment {
+  startSeconds: number;
+  text: string;
+}
+
 export interface AdminActivity {
   id: string;
   lessonId: string;
@@ -402,6 +449,9 @@ export interface AdminActivity {
   bodyText: string | null;
   embedProvider: string | null;
   embedResourceId: string | null;
+  captionsUrlEn: string | null;
+  captionsUrlTa: string | null;
+  transcriptSegments: TranscriptSegment[] | null;
   status: string;
 }
 
@@ -413,6 +463,9 @@ export interface ActivityInput {
   bodyText?: string;
   embedProvider?: string;
   embedResourceId?: string;
+  captionsUrlEn?: string;
+  captionsUrlTa?: string;
+  transcriptSegments?: TranscriptSegment[];
 }
 
 export async function listActivitiesForLesson(lessonId: string): Promise<AdminActivity[]> {
@@ -436,6 +489,57 @@ export async function reorderActivities(lessonId: string, orderedIds: string[]):
 
 export async function archiveActivity(activityId: string): Promise<void> {
   await apiClient.post(`/lms/admin/activities/${activityId}/archive`);
+}
+
+// ============================================================================
+// Downloadable Resources (004 Downloadable Resource Catalog batch, FR-049)
+// ============================================================================
+
+export type ResourceType = 'PDF' | 'WORKSHEET' | 'SPREADSHEET' | 'TEMPLATE' | 'IMAGE' | 'AUDIO' | 'ZIP' | 'PRESENTATION' | 'PROMPT_PACK';
+
+export interface AdminLessonResource {
+  id: string;
+  lessonId: string;
+  title: string;
+  type: ResourceType;
+  description: string | null;
+  language: string;
+  fileUrl: string;
+  fileSizeBytes: number | null;
+  version: number;
+  downloadPermission: 'VIEW_ONLY' | 'DOWNLOADABLE';
+  accessRule: 'PREVIEW' | 'ENROLLED_ONLY';
+  position: number;
+  status: string;
+}
+
+export interface ResourceInput {
+  title: string;
+  type: ResourceType;
+  description?: string;
+  language?: string;
+  fileUrl: string;
+  fileSizeBytes?: number;
+  downloadPermission?: 'VIEW_ONLY' | 'DOWNLOADABLE';
+  accessRule?: 'PREVIEW' | 'ENROLLED_ONLY';
+}
+
+export async function listResourcesForLesson(lessonId: string): Promise<AdminLessonResource[]> {
+  const { data } = await apiClient.get<ApiSuccessResponse<AdminLessonResource[]>>(`/lms/admin/lessons/${lessonId}/resources`);
+  return data.data;
+}
+
+export async function createResource(lessonId: string, input: ResourceInput): Promise<AdminLessonResource> {
+  const { data } = await apiClient.post<ApiSuccessResponse<AdminLessonResource>>(`/lms/admin/lessons/${lessonId}/resources`, input);
+  return data.data;
+}
+
+export async function reorderResources(lessonId: string, orderedIds: string[]): Promise<void> {
+  await apiClient.post(`/lms/admin/lessons/${lessonId}/resources/reorder`, { orderedIds });
+}
+
+export async function archiveResource(resourceId: string): Promise<void> {
+  await apiClient.post(`/lms/admin/resources/${resourceId}/archive`);
 }
 
 // ============================================================================
@@ -468,6 +572,31 @@ export async function listEnrollmentsAdmin(params: { courseId?: string; userId?:
 
 export async function createEnrollmentAdmin(input: { userId: string; courseId: string; source?: string; reason?: string }): Promise<AdminEnrollmentFull> {
   const { data } = await apiClient.post<ApiSuccessResponse<AdminEnrollmentFull>>('/lms/admin/enrollments', input);
+  return data.data;
+}
+
+// ============================================================================
+// Bulk CSV Import (004 Bulk CSV Import batch, FR-032)
+// ============================================================================
+
+export interface BulkImportRowResult {
+  row: number;
+  email: string;
+  status: 'CREATED' | 'DUPLICATE' | 'ERROR';
+  message?: string;
+  enrollmentId?: string;
+}
+
+export interface BulkImportResult {
+  totalRows: number;
+  created: number;
+  duplicates: number;
+  failed: number;
+  rows: BulkImportRowResult[];
+}
+
+export async function bulkImportEnrollmentsAdmin(courseId: string, csvContent: string): Promise<BulkImportResult> {
+  const { data } = await apiClient.post<ApiSuccessResponse<BulkImportResult>>(`/lms/admin/courses/${courseId}/enrollments/bulk-import`, { csvContent });
   return data.data;
 }
 
@@ -596,7 +725,8 @@ export interface CourseAnalytics {
   ratingCount: number;
   refundCorrelation: null;
   certificateRate: number;
-  deviceDistribution: null;
+  /** 004 PiP + Video Playback Telemetry batch (FR-040) — real device-bucket counts (e.g. `{ desktop: 5, mobile: 2 }`), `null` when no VIDEO playback telemetry exists yet for this course. */
+  deviceDistribution: Record<string, number> | null;
   languageDistribution: null;
   notApplicable: string[];
 }
@@ -640,5 +770,316 @@ export async function getCourseAtRiskLearnersAdmin(courseId: string): Promise<At
 
 export async function getCourseLessonAnalyticsAdmin(courseId: string): Promise<LessonAnalytics[]> {
   const { data } = await apiClient.get<ApiSuccessResponse<LessonAnalytics[]>>(`/lms/admin/courses/${courseId}/lessons/analytics`);
+  return data.data;
+}
+
+// ============================================================================
+// Course Announcements (004 Course Announcements batch, FR-102)
+// ============================================================================
+
+export type AnnouncementPriority = 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT';
+export type AnnouncementChannel = 'IN_APP' | 'EMAIL' | 'PUSH';
+
+export interface AdminAnnouncement {
+  id: string;
+  courseId: string;
+  moduleId: string | null;
+  title: string;
+  message: string;
+  priority: AnnouncementPriority;
+  channels: AnnouncementChannel[];
+  attachmentUrl: string | null;
+  status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+  publishAt: string | null;
+  expireAt: string | null;
+  emailSentAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateAnnouncementInput {
+  moduleId?: string | null;
+  title: string;
+  message: string;
+  priority?: AnnouncementPriority;
+  channels?: AnnouncementChannel[];
+  attachmentUrl?: string | null;
+  publishAt?: string | null;
+  expireAt?: string | null;
+}
+
+export async function createAnnouncementAdmin(courseId: string, input: CreateAnnouncementInput): Promise<AdminAnnouncement> {
+  const { data } = await apiClient.post<ApiSuccessResponse<AdminAnnouncement>>(`/lms/admin/courses/${courseId}/announcements`, input);
+  return data.data;
+}
+
+export async function listAnnouncementsAdmin(courseId: string): Promise<AdminAnnouncement[]> {
+  const { data } = await apiClient.get<ApiSuccessResponse<AdminAnnouncement[]>>(`/lms/admin/courses/${courseId}/announcements`);
+  return data.data;
+}
+
+export async function publishAnnouncementAdmin(announcementId: string): Promise<AdminAnnouncement> {
+  const { data } = await apiClient.post<ApiSuccessResponse<AdminAnnouncement>>(`/lms/admin/announcements/${announcementId}/publish`);
+  return data.data;
+}
+
+export async function archiveAnnouncementAdmin(announcementId: string): Promise<AdminAnnouncement> {
+  const { data } = await apiClient.post<ApiSuccessResponse<AdminAnnouncement>>(`/lms/admin/announcements/${announcementId}/archive`);
+  return data.data;
+}
+
+// ============================================================================
+// Waitlist (004 Waitlist batch, FR-028/029)
+// ============================================================================
+
+export interface AdminWaitlistEntry {
+  id: string;
+  courseId: string;
+  status: 'WAITING' | 'OFFERED' | 'CLAIMED' | 'EXPIRED' | 'CANCELLED';
+  priority: number;
+  joinedAt: string;
+  offeredAt: string | null;
+  offerExpiresAt: string | null;
+  claimedAt: string | null;
+  userId: string;
+  userDisplayName: string | null;
+  referralSource: string | null;
+  offerEmailSentAt: string | null;
+}
+
+export async function listWaitlistAdmin(courseId: string): Promise<AdminWaitlistEntry[]> {
+  const { data } = await apiClient.get<ApiSuccessResponse<AdminWaitlistEntry[]>>(`/lms/admin/courses/${courseId}/waitlist`);
+  return data.data;
+}
+
+// ============================================================================
+// LMS-wide Settings (004 LMS-wide Settings batch, FR-114)
+// ============================================================================
+
+export interface AdminLmsSettings {
+  defaultVideoWatchThresholdPercent: number;
+  defaultQuizPassingScorePercent: number;
+  defaultQuizMaxAttempts: number | null;
+  defaultAssignmentMaxAttempts: number | null;
+  defaultResourceDownloadPermission: 'VIEW_ONLY' | 'DOWNLOADABLE';
+  defaultLessonCompletionRuleType: string;
+  courseReviewMinProgressPercent: number;
+  streakQualifyLessonComplete: boolean;
+  streakQualifyQuizComplete: boolean;
+  streakQualifyAssignmentActivity: boolean;
+  streakQualifyMinLearningTime: boolean;
+  streakMinLearningTimeMinutes: number;
+  streakTimezone: string;
+  streakGraceDays: number;
+  updatedBy: string | null;
+  updatedAt: string;
+}
+
+export type LmsSettingsUpdate = Partial<
+  Omit<AdminLmsSettings, 'updatedBy' | 'updatedAt'>
+>;
+
+export async function getLmsSettingsAdmin(): Promise<AdminLmsSettings> {
+  const { data } = await apiClient.get<ApiSuccessResponse<AdminLmsSettings>>('/lms/admin/settings');
+  return data.data;
+}
+
+export async function updateLmsSettingsAdmin(patch: LmsSettingsUpdate): Promise<AdminLmsSettings> {
+  const { data } = await apiClient.patch<ApiSuccessResponse<AdminLmsSettings>>('/lms/admin/settings', patch);
+  return data.data;
+}
+
+// ============================================================================
+// Course Calendar (T092-T095, FR-103's real-data subset)
+// ============================================================================
+
+export interface CourseCalendarEvent {
+  type: 'ASSIGNMENT_DUE' | 'MODULE_UNLOCK' | 'ANNOUNCEMENT';
+  date: string;
+  title: string;
+  sourceId: string;
+}
+
+export async function getCourseCalendarAdmin(courseId: string): Promise<CourseCalendarEvent[]> {
+  const { data } = await apiClient.get<ApiSuccessResponse<CourseCalendarEvent[]>>(`/lms/admin/courses/${courseId}/calendar`);
+  return data.data;
+}
+
+// ============================================================================
+// Cohorts (T085, FR-012/FR-034)
+// ============================================================================
+
+export interface AdminCohort {
+  id: string;
+  courseId: string;
+  name: string;
+  startDate: string;
+  endDate: string | null;
+  timezone: string;
+  capacity: number | null;
+  status: 'OPEN' | 'IN_PROGRESS' | 'COMPLETED' | 'ARCHIVED';
+  memberCount?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CohortInput {
+  name: string;
+  startDate: string;
+  endDate?: string | null;
+  timezone: string;
+  capacity?: number | null;
+}
+
+export interface AdminCohortMember {
+  id: string;
+  cohortId: string;
+  userId: string;
+  enrollmentId: string;
+  joinedAt: string;
+}
+
+export interface AdminCohortModuleSchedule {
+  cohortId: string;
+  moduleId: string;
+  unlockAt: string;
+}
+
+export async function createCohort(courseId: string, input: CohortInput): Promise<AdminCohort> {
+  const { data } = await apiClient.post<ApiSuccessResponse<AdminCohort>>(`/lms/admin/courses/${courseId}/cohorts`, input);
+  return data.data;
+}
+
+export async function listCohortsForCourse(courseId: string): Promise<AdminCohort[]> {
+  const { data } = await apiClient.get<ApiSuccessResponse<AdminCohort[]>>(`/lms/admin/courses/${courseId}/cohorts`);
+  return data.data;
+}
+
+export async function getCohortAdmin(cohortId: string): Promise<AdminCohort> {
+  const { data } = await apiClient.get<ApiSuccessResponse<AdminCohort>>(`/lms/admin/cohorts/${cohortId}`);
+  return data.data;
+}
+
+export async function updateCohort(cohortId: string, patch: Partial<CohortInput> & { status?: AdminCohort['status'] }): Promise<AdminCohort> {
+  const { data } = await apiClient.patch<ApiSuccessResponse<AdminCohort>>(`/lms/admin/cohorts/${cohortId}`, patch);
+  return data.data;
+}
+
+export async function addCohortMember(cohortId: string, userId: string): Promise<AdminCohortMember> {
+  const { data } = await apiClient.post<ApiSuccessResponse<AdminCohortMember>>(`/lms/admin/cohorts/${cohortId}/members`, { userId });
+  return data.data;
+}
+
+export async function listCohortMembers(cohortId: string): Promise<AdminCohortMember[]> {
+  const { data } = await apiClient.get<ApiSuccessResponse<AdminCohortMember[]>>(`/lms/admin/cohorts/${cohortId}/members`);
+  return data.data;
+}
+
+export async function removeCohortMember(cohortId: string, memberId: string): Promise<void> {
+  await apiClient.delete(`/lms/admin/cohorts/${cohortId}/members/${memberId}`);
+}
+
+export async function setCohortModuleSchedule(cohortId: string, moduleId: string, unlockAt: string): Promise<AdminCohortModuleSchedule> {
+  const { data } = await apiClient.put<ApiSuccessResponse<AdminCohortModuleSchedule>>(`/lms/admin/cohorts/${cohortId}/schedule/${moduleId}`, { unlockAt });
+  return data.data;
+}
+
+export async function listCohortModuleSchedules(cohortId: string): Promise<AdminCohortModuleSchedule[]> {
+  const { data } = await apiClient.get<ApiSuccessResponse<AdminCohortModuleSchedule[]>>(`/lms/admin/cohorts/${cohortId}/schedule`);
+  return data.data;
+}
+
+// --- Question Bank (004 Question Bank batch, T107/FR-064) ---
+
+export const QUESTION_BANK_DIFFICULTIES = ['EASY', 'MEDIUM', 'HARD'] as const;
+export type QuestionBankDifficulty = (typeof QUESTION_BANK_DIFFICULTIES)[number];
+
+export const QUESTION_BANK_REVIEW_STATUSES = ['DRAFT', 'APPROVED', 'ARCHIVED'] as const;
+export type QuestionBankReviewStatus = (typeof QUESTION_BANK_REVIEW_STATUSES)[number];
+
+export const QUESTION_BANK_ITEM_STATUSES = ['DRAFT', 'PUBLISHED', 'ARCHIVED'] as const;
+export type QuestionBankItemStatus = (typeof QUESTION_BANK_ITEM_STATUSES)[number];
+
+export interface AdminQuestionBankItemOption {
+  id: string;
+  text: string;
+  isCorrect: boolean;
+  position: number;
+}
+
+export interface AdminQuestionBankItem {
+  id: string;
+  courseId: string;
+  type: string;
+  prompt: string;
+  explanation: string | null;
+  points: number;
+  category: string | null;
+  difficulty: QuestionBankDifficulty;
+  learningObjective: string | null;
+  tags: string[];
+  language: string;
+  version: number;
+  reviewStatus: QuestionBankReviewStatus;
+  usageCount: number;
+  status: QuestionBankItemStatus;
+  options: AdminQuestionBankItemOption[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QuestionBankItemInput {
+  type: string;
+  prompt: string;
+  explanation?: string;
+  points?: number;
+  category?: string;
+  difficulty?: QuestionBankDifficulty;
+  learningObjective?: string;
+  tags?: string[];
+  language?: string;
+  reviewStatus?: QuestionBankReviewStatus;
+  status?: QuestionBankItemStatus;
+  options?: { text: string; isCorrect: boolean }[];
+}
+
+export async function listQuestionBankItems(
+  courseId: string,
+  filter: { category?: string; difficulty?: QuestionBankDifficulty; reviewStatus?: QuestionBankReviewStatus; status?: QuestionBankItemStatus } = {},
+): Promise<AdminQuestionBankItem[]> {
+  const { data } = await apiClient.get<ApiSuccessResponse<AdminQuestionBankItem[]>>(`/lms/admin/courses/${courseId}/question-bank`, { params: filter });
+  return data.data;
+}
+
+export async function createQuestionBankItem(courseId: string, input: QuestionBankItemInput): Promise<AdminQuestionBankItem> {
+  const { data } = await apiClient.post<ApiSuccessResponse<AdminQuestionBankItem>>(`/lms/admin/courses/${courseId}/question-bank`, input);
+  return data.data;
+}
+
+export async function updateQuestionBankItem(itemId: string, input: Partial<QuestionBankItemInput>): Promise<AdminQuestionBankItem> {
+  const { data } = await apiClient.patch<ApiSuccessResponse<AdminQuestionBankItem>>(`/lms/admin/question-bank/${itemId}`, input);
+  return data.data;
+}
+
+export async function archiveQuestionBankItem(itemId: string): Promise<AdminQuestionBankItem> {
+  const { data } = await apiClient.post<ApiSuccessResponse<AdminQuestionBankItem>>(`/lms/admin/question-bank/${itemId}/archive`);
+  return data.data;
+}
+
+export interface GenerateQuestionsFromBankInput {
+  count?: number;
+  difficultyDistribution?: Partial<Record<QuestionBankDifficulty, number>>;
+  category?: string;
+  excludeIds?: string[];
+}
+
+export interface GenerateQuestionsFromBankResult {
+  createdQuestionIds: string[];
+  requested: number;
+  drawn: number;
+}
+
+export async function generateQuestionsFromBank(quizId: string, input: GenerateQuestionsFromBankInput): Promise<GenerateQuestionsFromBankResult> {
+  const { data } = await apiClient.post<ApiSuccessResponse<GenerateQuestionsFromBankResult>>(`/lms/admin/quizzes/${quizId}/generate-from-bank`, input);
   return data.data;
 }

@@ -12,6 +12,9 @@ import { evaluateLessonAccess } from './access-evaluator.service';
 import { MAX_TIME_SPENT_DELTA_SECONDS } from './progress.validation';
 import { scopedIdempotencyKey } from './lms-idempotency.util';
 import { recordLearningEvent } from './learning-event.service';
+import { recordLearningTimeForStreak } from './learning-streak.service';
+import { applyMandatoryMigrationIfDue } from './course-version.service';
+import { isModuleProjectsComplete } from './project.service';
 import type { TransactionClient } from '../database/transaction';
 
 export interface ProgressUpdateInput {
@@ -206,6 +209,12 @@ async function applyProgressUpdate(enrollmentId: string, lessonId: string, input
       );
     }
 
+    // FR-057 Learning Streak — "minimum learning time" qualifying action.
+    // Reuses `delta`, the SAME server-bounded value (already clamped by
+    // `MAX_TIME_SPENT_DELTA_SECONDS` above) `LessonProgress.timeSpentSeconds`
+    // itself trusts — not a new gameable input.
+    await recordLearningTimeForStreak(userId, delta, tx);
+
     return updated;
   });
 }
@@ -219,13 +228,23 @@ export async function computeModuleProgress(enrollmentId: string, moduleId: stri
 
   const completedMandatory = mandatory.filter((l) => progressByLesson.get(l.id)?.status === 'COMPLETED').length;
   const percentage = mandatory.length === 0 ? 100 : Math.round((completedMandatory / mandatory.length) * 100);
+  const lessonsComplete = mandatory.length === 0 ? lessons.length === 0 : completedMandatory === mandatory.length;
+
+  // 004 Project-based Learning batch (FR-077) — "project status MUST
+  // connect to module completion." A real, enforced gate: a module whose
+  // lessons are all otherwise complete still is NOT complete while a
+  // PUBLISHED project's required artifacts remain un-approved. Vacuously
+  // true for a module with no project (see `isModuleProjectsComplete`'s
+  // own doc comment).
+  const projectsComplete = await isModuleProjectsComplete(enrollmentId, moduleId, tx);
 
   return {
     totalLessons: lessons.length,
     totalMandatoryLessons: mandatory.length,
     completedMandatoryLessons: completedMandatory,
     percentage,
-    isComplete: mandatory.length === 0 ? lessons.length === 0 : completedMandatory === mandatory.length,
+    isComplete: lessonsComplete && projectsComplete,
+    projectsComplete,
     // Per-lesson status for the lesson-player curriculum sidebar (US2) —
     // additive field, existing callers (`completion.service.ts`'s
     // `isModuleCompleteForEnrollment`) only read `.isComplete` and are
@@ -260,6 +279,12 @@ export async function computeCourseProgress(enrollmentId: string, courseId: stri
 export async function getCourseProgressForLearner(userId: string, courseId: string) {
   const enrollment = await findEnrollmentForUserAndCourse(userId, courseId);
   if (!enrollment) throw AppError.notFound('Enrollment not found');
+
+  // FR-099 "mandatory migration" — the real read-time enforcement point
+  // (no background job scheduler exists in this codebase). Idempotent —
+  // a no-op once this enrollment is already migrated to the due version.
+  await applyMandatoryMigrationIfDue(userId, enrollment.id, courseId);
+
   return computeCourseProgress(enrollment.id, courseId);
 }
 

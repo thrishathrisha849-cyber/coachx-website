@@ -3,6 +3,8 @@ import { AppError } from '../utils/app-error';
 import { withTransaction } from '../database/transaction';
 import { recordAuditEvent } from '../database/audit-event.repository';
 import { getPrismaClient } from '../database/prisma-client';
+import { getEmailAdapter } from '../auth/email.port';
+import { logger } from '../utils/logger';
 import { findCourseById } from './course.repository';
 import { findEnrollmentForUserAndCourse, findEnrollmentById } from './enrollment.repository';
 import {
@@ -19,7 +21,10 @@ import {
 } from './certificate.repository';
 import { toPublicCertificate, toAdminCertificateTemplate } from './certificate.serializers';
 import { recordLearningEvent } from './learning-event.service';
+import { hasActiveAcademicIntegrityHold } from './academic-integrity.service';
+import { isFinalProjectApprovedForEnrollment } from './project.service';
 import type { AdminCertificateTemplate, CertificateEligibility, EligibilityCondition, PublicCertificate } from './certificate.types';
+import type { LmsBusinessRuleCode } from './lms-error-codes';
 
 const CREDENTIAL_CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I — avoids visual ambiguity on a printed/shared credential
 
@@ -44,9 +49,15 @@ async function uniqueCredentialId(): Promise<string> {
  * FR-081 eligibility evaluator — SC-002's "server-evaluated eligibility
  * snapshot." Evaluates every condition this codebase can ACTUALLY verify
  * against a real signal; conditions with no owning system yet (attendance
- * threshold — no Live Session system; final project approved — no
- * project-based-learning system; payment settled — no Volume 009) are
- * reported in `notApplicable`, never silently assumed satisfied.
+ * threshold — no Live Session system; payment settled — no Volume 009)
+ * are reported in `notApplicable`, never silently assumed satisfied.
+ *
+ * 004 Project-based Learning batch (FR-077) — "final project approved" is
+ * no longer unconditionally not-applicable: `isFinalProjectApprovedForEnrollment`
+ * returns `null` when this specific COURSE has no PUBLISHED project at
+ * all (genuinely not a relevant fact about that course — omitted from
+ * `conditions` entirely, not blocking), or a real `true`/`false` when it
+ * does — a genuinely NEW, enforced gate, not a fabricated pass.
  */
 export async function evaluateCertificateEligibility(userId: string, courseId: string): Promise<CertificateEligibility> {
   const course = await findCourseById(courseId);
@@ -57,6 +68,14 @@ export async function evaluateCertificateEligibility(userId: string, courseId: s
   const prisma = getPrismaClient();
   if (!prisma) throw AppError.internal('Database is not connected');
   const user = await prisma.user.findUnique({ where: { id: userId } });
+
+  // 004 Academic-integrity investigation batch (FR-116) — an OPEN/
+  // UNDER_REVIEW/unappealed-ACTION_TAKEN academic-integrity case against
+  // this learner for THIS course is exactly FR-081's "no active
+  // misconduct restriction" condition, previously unenforceable (no
+  // investigation entity existed to check against).
+  const hasMisconductHold = await hasActiveAcademicIntegrityHold(userId, courseId);
+  const finalProjectApproved = await isFinalProjectApprovedForEnrollment(userId, courseId);
 
   const conditions: EligibilityCondition[] = [
     {
@@ -79,12 +98,20 @@ export async function evaluateCertificateEligibility(userId: string, courseId: s
       label: 'No active account restriction',
       satisfied: user?.status === 'ACTIVE',
     },
+    {
+      key: 'noActiveMisconductInvestigation',
+      label: 'No active academic-integrity investigation for this course',
+      satisfied: !hasMisconductHold,
+    },
+    ...(finalProjectApproved !== null
+      ? [{ key: 'finalProjectApproved', label: 'Final project artifacts are all approved', satisfied: finalProjectApproved }]
+      : []),
   ];
 
   return {
     eligible: conditions.every((c) => c.satisfied),
     conditions,
-    notApplicable: ['attendanceThreshold', 'finalProjectApproved', 'paymentSettled'],
+    notApplicable: ['attendanceThreshold', 'paymentSettled'],
   };
 }
 
@@ -103,7 +130,10 @@ export async function generateCertificateForEnrollment(userId: string, courseId:
 
   const eligibility = await evaluateCertificateEligibility(userId, courseId);
   if (!eligibility.eligible) {
-    throw AppError.badRequest('This course is not yet eligible for a certificate', { conditions: eligibility.conditions });
+    // 004 Error-code taxonomy batch (FR-125) — certificate ineligibility
+    // previously carried no machine-readable code, only `conditions`.
+    const code: LmsBusinessRuleCode = 'CERTIFICATE_NOT_ELIGIBLE';
+    throw AppError.badRequest('This course is not yet eligible for a certificate', { code, conditions: eligibility.conditions });
   }
 
   const course = await findCourseById(courseId);
@@ -155,6 +185,22 @@ export async function generateCertificateForEnrollment(userId: string, courseId:
 
     return created;
   });
+
+  // Cross-cutting polish batch (T121, notification wiring) — US5
+  // acceptance scenario 2: "...the learner is notified, and the
+  // dashboard updates." A real, best-effort email via the same
+  // `EmailPort` waitlist/wishlist/announcement emails already use — never
+  // blocks or rolls back certificate issuance if delivery fails (the
+  // certificate row above is already committed by this point).
+  try {
+    await getEmailAdapter().send({
+      to: user.email,
+      subject: `Your certificate for "${course.title}" is ready`,
+      text: `Congratulations! You've earned a certificate for completing "${course.title}". Credential ID: ${credentialId}. View and share it from your CoachX dashboard.`,
+    });
+  } catch (err) {
+    logger.warn('Certificate-issued email delivery failed', { courseId, userId, credentialId, error: err instanceof Error ? err.message : err });
+  }
 
   return toPublicCertificate(certificate);
 }

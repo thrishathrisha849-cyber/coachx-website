@@ -332,7 +332,7 @@ describe('FR-109 LMS analytics event taxonomy', () => {
     const startRes = await request(app).post(`/api/v1/lms/me/assignments/${assignmentId}/submissions`).set('Authorization', `Bearer ${learner.accessToken}`);
     const submissionId = startRes.body.data.id;
     await request(app).patch(`/api/v1/lms/me/submissions/${submissionId}`).set('Authorization', `Bearer ${learner.accessToken}`).send({ textBody: 'My work' });
-    await request(app).post(`/api/v1/lms/me/submissions/${submissionId}/submit`).set('Authorization', `Bearer ${learner.accessToken}`);
+    await request(app).post(`/api/v1/lms/me/submissions/${submissionId}/submit`).set('Authorization', `Bearer ${learner.accessToken}`).send({ declaredOriginal: true });
     await request(app)
       .post(`/api/v1/lms/admin/submissions/${submissionId}/review`)
       .set('Authorization', `Bearer ${admin.accessToken}`)
@@ -405,7 +405,12 @@ describe('FR-106 course-level analytics', () => {
     expect(res.body.data.quizPassRate).toBe(33);
     expect(res.body.data.certificateRate).toBe(100);
     expect(res.body.data.assignmentApprovalRate).toBe(0);
-    expect(res.body.data.notApplicable).toEqual(['refundCorrelation', 'deviceDistribution', 'languageDistribution']);
+    // 004 PiP + Video Playback Telemetry batch (FR-040): `deviceDistribution`
+    // is no longer "not applicable" — it's now real (if `null` when no
+    // playback telemetry exists yet, which is the case for this scenario's
+    // learners, none of whom posted playback telemetry).
+    expect(res.body.data.notApplicable).toEqual(['refundCorrelation', 'languageDistribution']);
+    expect(res.body.data.deviceDistribution).toBeNull();
   });
 });
 

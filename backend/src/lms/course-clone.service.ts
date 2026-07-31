@@ -15,9 +15,10 @@ import type { TransactionClient } from '../database/transaction';
  * QuizAttempt/Submission row is ever read or copied by this service, so
  * SC-008's "0% carry-over" guarantee holds structurally, not by convention.
  *
- * `ASSESSMENT_BANK` is accepted by the type (so the honest gap is
- * discoverable, not silently unsupported) but rejected at runtime — see
- * `cloneCourse`'s guard clause below for why.
+ * `ASSESSMENT_BANK` is handled separately from the other five modes (see
+ * `cloneAssessmentBankOnly` below) — it copies `QuestionBankItem` template
+ * rows rather than curriculum/lessons, so it doesn't fit `MODE_COPIES`'
+ * curriculum/activities/assessments/instructors/certificateSettings shape.
  */
 export type CourseCloneMode = 'FULL' | 'CURRICULUM_ONLY' | 'CONTENT_WITHOUT_ENROLLMENTS' | 'ASSESSMENT_BANK' | 'CERTIFICATE_SETTINGS' | 'TRANSLATION_VARIANT';
 
@@ -213,20 +214,105 @@ async function cloneModulesLessonsAndContent(
   }
 }
 
+/**
+ * FR-098 acceptance scenario 3 / ASSESSMENT_BANK mode. Now that a real,
+ * course-scoped, reusable `QuestionBankItem` entity exists (004 Question
+ * Bank batch, T107/FR-064 — see `question-bank.service.ts`), "clone only
+ * the assessment bank" has a coherent target: copy every `QuestionBankItem`
+ * (+ its options) from the source course into a brand-new course that
+ * carries NO curriculum, lessons, or certificate settings — exactly the
+ * scenario's own wording. Legacy per-lesson `Quiz`/`Question` rows are
+ * deliberately NOT copied here: they belong 1:1 to a Lesson, and this mode
+ * creates no lessons, so there is nothing coherent to attach them to — the
+ * "assessment bank" a clone of this mode produces is the reusable template
+ * pool, not any one quiz's already-built instance.
+ */
+async function cloneAssessmentBankOnly(sourceCourseId: string, input: CloneCourseInput, actorId: string): Promise<AdminCourse> {
+  const source = await findCourseById(sourceCourseId);
+  if (!source) throw AppError.notFound('Course not found');
+
+  const course = await withTransaction(
+    async (tx) => {
+      const newCourse = await createCourseRow(
+        {
+          title: input.title?.trim() || `${source.title} (Assessment Bank Copy)`,
+          slug: input.slug,
+          language: source.language,
+          level: source.level,
+          category: source.categoryId ? { connect: { id: source.categoryId } } : undefined,
+          certificateAvailable: false,
+          priceType: 'FREE',
+          priceAmountMinor: 0,
+          currency: source.currency,
+          status: 'DRAFT',
+          createdBy: actorId,
+          updatedBy: actorId,
+        },
+        tx,
+      );
+
+      const bankItems = await tx.questionBankItem.findMany({
+        where: { courseId: sourceCourseId, deletedAt: null },
+        include: { options: { orderBy: { position: 'asc' } } },
+      });
+
+      for (const item of bankItems) {
+        await tx.questionBankItem.create({
+          data: {
+            course: { connect: { id: newCourse.id } },
+            type: item.type,
+            prompt: item.prompt,
+            explanation: item.explanation,
+            points: item.points,
+            category: item.category,
+            difficulty: item.difficulty,
+            learningObjective: item.learningObjective,
+            tags: item.tags,
+            language: item.language,
+            // A cloned bank item is a brand-new template lineage in its own
+            // course — usage history and version count belong to the
+            // ORIGINAL bank, not the copy (same "no history carries over"
+            // principle FR-098/SC-008 applies to everything else this
+            // service clones).
+            version: 1,
+            reviewStatus: item.reviewStatus,
+            usageCount: 0,
+            answerKey: item.answerKey as never,
+            status: item.status,
+            createdBy: actorId,
+            updatedBy: actorId,
+            options: item.options.length
+              ? { create: item.options.map((o) => ({ text: o.text, isCorrect: o.isCorrect, position: o.position })) }
+              : undefined,
+          },
+        });
+      }
+
+      await recordAuditEvent(
+        {
+          actorType: 'USER',
+          actorId,
+          action: 'lms.course.cloned',
+          resourceType: 'course',
+          resourceId: newCourse.id,
+          afterState: { sourceCourseId, mode: input.mode, bankItemsCopied: bankItems.length },
+        },
+        tx,
+      );
+
+      return newCourse;
+    },
+    { timeout: 20_000 },
+  );
+
+  const full = await findCourseById(course.id);
+  if (!full) throw AppError.internal('Cloned course could not be reloaded');
+  return toAdminCourse(full);
+}
+
 export async function cloneCourse(sourceCourseId: string, input: CloneCourseInput, actorId: string): Promise<AdminCourse> {
   if (input.mode === 'ASSESSMENT_BANK') {
-    // Quizzes/Assignments in this codebase attach 1:1 to a Lesson by design
-    // (see quiz.repository.ts / assignment.repository.ts's own file-header
-    // notes: no separate, cross-course-reusable Question Bank exists this
-    // batch). "Clone only the assessment bank" therefore has no coherent
-    // target to attach the copied quizzes/assignments to without inventing
-    // synthetic empty lesson containers — a fake, not a real feature. Rather
-    // than silently reinterpret this mode into something the spec didn't
-    // ask for, it is honestly rejected here until a real reusable
-    // Question/Assignment Bank entity exists.
-    throw AppError.badRequest(
-      'Assessment-bank cloning is not yet supported — quizzes and assignments in this codebase belong to a specific lesson, not a reusable cross-course question bank.',
-    );
+    return cloneAssessmentBankOnly(sourceCourseId, input, actorId);
   }
 
   const source = await findCourseById(sourceCourseId);
@@ -267,7 +353,12 @@ export async function cloneCourse(sourceCourseId: string, input: CloneCourseInpu
           priceAmountMinor: 0,
           currency: source.currency,
           status: 'DRAFT',
-          ...(input.mode === 'TRANSLATION_VARIANT' ? { translationOfCourse: { connect: { id: sourceCourseId } } } : {}),
+          // FR-101 — a translation variant starts its status workflow at
+          // NOT_STARTED the moment it's cloned; every other clone mode
+          // leaves `translationStatus` null (meaningless for a non-variant course).
+          ...(input.mode === 'TRANSLATION_VARIANT'
+            ? { translationOfCourse: { connect: { id: sourceCourseId } }, translationStatus: 'NOT_STARTED' as never }
+            : {}),
           createdBy: actorId,
           updatedBy: actorId,
         },

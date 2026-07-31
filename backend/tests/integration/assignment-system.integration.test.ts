@@ -260,7 +260,10 @@ describe('Learner submission flow — access, late policy, grading (004 US4)', (
 
     await request(app).patch(`/api/v1/lms/me/submissions/${submissionId}`).set('Authorization', `Bearer ${learner.accessToken}`).send({ textBody: 'My business plan draft.' });
 
-    const submitRes = await request(app).post(`/api/v1/lms/me/submissions/${submissionId}/submit`).set('Authorization', `Bearer ${learner.accessToken}`);
+    const submitRes = await request(app)
+      .post(`/api/v1/lms/me/submissions/${submissionId}/submit`)
+      .set('Authorization', `Bearer ${learner.accessToken}`)
+      .send({ declaredOriginal: true });
     expect(submitRes.status).toBe(200);
     expect(submitRes.body.data.status).toBe('SUBMITTED');
     expect(submitRes.body.data.isLate).toBe(false);
@@ -298,7 +301,10 @@ describe('Learner submission flow — access, late policy, grading (004 US4)', (
     const submissionId = startRes.body.data.id;
     await request(app).patch(`/api/v1/lms/me/submissions/${submissionId}`).set('Authorization', `Bearer ${learner.accessToken}`).send({ textBody: 'Late but submitted.' });
 
-    const submitRes = await request(app).post(`/api/v1/lms/me/submissions/${submissionId}/submit`).set('Authorization', `Bearer ${learner.accessToken}`);
+    const submitRes = await request(app)
+      .post(`/api/v1/lms/me/submissions/${submissionId}/submit`)
+      .set('Authorization', `Bearer ${learner.accessToken}`)
+      .send({ declaredOriginal: true });
     expect(submitRes.status).toBe(200);
     expect(submitRes.body.data.isLate).toBe(true);
   });
@@ -316,7 +322,10 @@ describe('Learner submission flow — access, late policy, grading (004 US4)', (
     const submissionId = startRes.body.data.id;
     await request(app).patch(`/api/v1/lms/me/submissions/${submissionId}`).set('Authorization', `Bearer ${learner.accessToken}`).send({ textBody: 'Too late.' });
 
-    const submitRes = await request(app).post(`/api/v1/lms/me/submissions/${submissionId}/submit`).set('Authorization', `Bearer ${learner.accessToken}`);
+    const submitRes = await request(app)
+      .post(`/api/v1/lms/me/submissions/${submissionId}/submit`)
+      .set('Authorization', `Bearer ${learner.accessToken}`)
+      .send({ declaredOriginal: true });
     expect(submitRes.status).toBe(400);
   });
 
@@ -331,7 +340,7 @@ describe('Learner submission flow — access, late policy, grading (004 US4)', (
     const firstStart = await request(app).post(`/api/v1/lms/me/assignments/${assignmentId}/submissions`).set('Authorization', `Bearer ${learner.accessToken}`);
     const firstId = firstStart.body.data.id;
     await request(app).patch(`/api/v1/lms/me/submissions/${firstId}`).set('Authorization', `Bearer ${learner.accessToken}`).send({ textBody: 'First attempt.' });
-    await request(app).post(`/api/v1/lms/me/submissions/${firstId}/submit`).set('Authorization', `Bearer ${learner.accessToken}`);
+    await request(app).post(`/api/v1/lms/me/submissions/${firstId}/submit`).set('Authorization', `Bearer ${learner.accessToken}`).send({ declaredOriginal: true });
 
     await request(app).post(`/api/v1/lms/admin/submissions/${firstId}/review`).set('Authorization', `Bearer ${admin.accessToken}`).send({
       decision: 'REQUEST_CHANGES',
@@ -350,7 +359,7 @@ describe('Learner submission flow — access, late policy, grading (004 US4)', (
 
     // maxAttempts=2 already reached (2 rows exist) — a further resubmission after another CHANGES_REQUESTED must be blocked.
     await request(app).patch(`/api/v1/lms/me/submissions/${secondStart.body.data.id}`).set('Authorization', `Bearer ${learner.accessToken}`).send({ textBody: 'Second attempt.' });
-    await request(app).post(`/api/v1/lms/me/submissions/${secondStart.body.data.id}/submit`).set('Authorization', `Bearer ${learner.accessToken}`);
+    await request(app).post(`/api/v1/lms/me/submissions/${secondStart.body.data.id}/submit`).set('Authorization', `Bearer ${learner.accessToken}`).send({ declaredOriginal: true });
     await request(app).post(`/api/v1/lms/admin/submissions/${secondStart.body.data.id}/review`).set('Authorization', `Bearer ${admin.accessToken}`).send({
       decision: 'REQUEST_CHANGES',
       criterionScores: [],
@@ -372,7 +381,7 @@ describe('Learner submission flow — access, late policy, grading (004 US4)', (
     const startRes = await request(app).post(`/api/v1/lms/me/assignments/${assignmentId}/submissions`).set('Authorization', `Bearer ${learner.accessToken}`);
     const submissionId = startRes.body.data.id;
     await request(app).patch(`/api/v1/lms/me/submissions/${submissionId}`).set('Authorization', `Bearer ${learner.accessToken}`).send({ textBody: 'Work.' });
-    await request(app).post(`/api/v1/lms/me/submissions/${submissionId}/submit`).set('Authorization', `Bearer ${learner.accessToken}`);
+    await request(app).post(`/api/v1/lms/me/submissions/${submissionId}/submit`).set('Authorization', `Bearer ${learner.accessToken}`).send({ declaredOriginal: true });
 
     await request(app).post(`/api/v1/lms/admin/submissions/${submissionId}/review`).set('Authorization', `Bearer ${admin.accessToken}`).send({
       decision: 'APPROVE',
@@ -399,8 +408,8 @@ describe('Learner submission flow — access, late policy, grading (004 US4)', (
     const submissionId = startRes.body.data.id;
     await request(app).patch(`/api/v1/lms/me/submissions/${submissionId}`).set('Authorization', `Bearer ${learner.accessToken}`).send({ textBody: 'Work.' });
 
-    const first = await request(app).post(`/api/v1/lms/me/submissions/${submissionId}/submit`).set('Authorization', `Bearer ${learner.accessToken}`);
-    const second = await request(app).post(`/api/v1/lms/me/submissions/${submissionId}/submit`).set('Authorization', `Bearer ${learner.accessToken}`);
+    const first = await request(app).post(`/api/v1/lms/me/submissions/${submissionId}/submit`).set('Authorization', `Bearer ${learner.accessToken}`).send({ declaredOriginal: true });
+    const second = await request(app).post(`/api/v1/lms/me/submissions/${submissionId}/submit`).set('Authorization', `Bearer ${learner.accessToken}`).send({ declaredOriginal: true });
     expect(second.body.data).toEqual(first.body.data);
   });
 
@@ -415,7 +424,7 @@ describe('Learner submission flow — access, late policy, grading (004 US4)', (
     const startRes = await request(app).post(`/api/v1/lms/me/assignments/${assignmentId}/submissions`).set('Authorization', `Bearer ${learner.accessToken}`);
     const submissionId = startRes.body.data.id;
     await request(app).patch(`/api/v1/lms/me/submissions/${submissionId}`).set('Authorization', `Bearer ${learner.accessToken}`).send({ textBody: 'Not good enough.' });
-    await request(app).post(`/api/v1/lms/me/submissions/${submissionId}/submit`).set('Authorization', `Bearer ${learner.accessToken}`);
+    await request(app).post(`/api/v1/lms/me/submissions/${submissionId}/submit`).set('Authorization', `Bearer ${learner.accessToken}`).send({ declaredOriginal: true });
 
     const reviewRes = await request(app).post(`/api/v1/lms/admin/submissions/${submissionId}/review`).set('Authorization', `Bearer ${admin.accessToken}`).send({
       decision: 'REJECT',

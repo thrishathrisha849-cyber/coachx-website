@@ -192,3 +192,23 @@ export function updateCourse(id: string, data: Prisma.CourseUpdateInput, tx?: Tr
 export function countModulesForCourse(courseId: string, tx?: TransactionClient) {
   return db(tx).courseModule.count({ where: { courseId, status: { not: 'ARCHIVED' } } });
 }
+
+/** 004 Course Translation Management batch (FR-101) — every translation-variant course linked back to this one as its source. */
+export function findTranslationVariantsForCourse(courseId: string, tx?: TransactionClient) {
+  return db(tx).course.findMany({ where: { translationOfCourseId: courseId }, include: courseInclude });
+}
+
+/**
+ * FR-101 "automatically flag a translated version as Outdated when its
+ * source lesson is updated" — every variant currently mid-workflow
+ * (IN_PROGRESS/REVIEW/APPROVED/PUBLISHED) flips to OUTDATED. A variant
+ * still NOT_STARTED is skipped — there is no translation work yet to go
+ * stale — and one already OUTDATED is left alone (idempotent, not
+ * re-audited).
+ */
+export function flagTranslationVariantsOutdated(sourceCourseId: string, tx?: TransactionClient) {
+  return db(tx).course.updateMany({
+    where: { translationOfCourseId: sourceCourseId, translationStatus: { in: ['IN_PROGRESS', 'REVIEW', 'APPROVED', 'PUBLISHED'] } },
+    data: { translationStatus: 'OUTDATED' },
+  });
+}

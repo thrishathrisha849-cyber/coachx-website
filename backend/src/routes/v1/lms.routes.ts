@@ -26,6 +26,7 @@ import {
   moduleIdParamSchema,
   courseModulesParamSchema,
   publicCourseModulesParamSchema,
+  changeTranslationStatusSchema,
 } from '../../lms/lms.validation';
 import {
   createLessonSchema,
@@ -38,6 +39,7 @@ import {
   reorderActivitiesSchema,
   activityIdParamSchema,
   lessonActivitiesParamSchema,
+  playbackProgressSchema,
 } from '../../lms/lesson.validation';
 import {
   selfEnrollSchema,
@@ -53,6 +55,59 @@ import {
   instructorOverrideCompleteSchema,
 } from '../../lms/enrollment.validation';
 import { updateLessonProgressSchema, completeLessonSchema, courseIdParamSchema as meCourseIdParamSchema } from '../../lms/progress.validation';
+import { updateLmsSettingsSchema } from '../../lms/lms-settings.validation';
+import {
+  createBankItemSchema,
+  updateBankItemSchema,
+  bankItemIdParamSchema,
+  listBankItemsQuerySchema,
+  generateQuestionsFromBankSchema,
+} from '../../lms/question-bank.validation';
+import {
+  postBankItem,
+  getBankItemsForCourse,
+  getBankItemByIdAdmin,
+  patchBankItem,
+  postArchiveBankItem,
+  postGenerateQuestionsFromBank,
+} from '../../lms/question-bank.controller';
+import {
+  createCohortSchema,
+  updateCohortSchema,
+  cohortIdParamSchema,
+  courseIdParamSchema as cohortCourseIdParamSchema,
+  addCohortMemberSchema,
+  cohortMemberIdParamSchema,
+  setCohortModuleScheduleSchema,
+  cohortModuleParamSchema,
+} from '../../lms/cohort.validation';
+import {
+  postCohort,
+  getCohortsForCourse,
+  getCohortByIdAdmin,
+  patchCohort,
+  postCohortMember,
+  getCohortMembers,
+  deleteCohortMemberAdmin,
+  putCohortModuleSchedule,
+  deleteCohortModuleScheduleAdmin,
+  getCohortModuleSchedules,
+} from '../../lms/cohort.controller';
+import {
+  flagForInvestigationSchema,
+  listAcademicIntegrityCasesQuerySchema,
+  academicIntegrityCaseIdParamSchema,
+  resolveInvestigationSchema,
+  resolveIntegrityAppealSchema,
+} from '../../lms/academic-integrity.validation';
+import {
+  postFlagForInvestigation,
+  getAcademicIntegrityCases,
+  getAcademicIntegrityCaseDetail,
+  postResolveInvestigation,
+  postResolveIntegrityAppeal,
+  getMyAcademicIntegrityCases,
+} from '../../lms/academic-integrity.controller';
 import { getPublicCategories, getPublicCourses, getPublicCourseDetail, getPublicCourseModules } from '../../lms/lms.controller';
 import {
   postCategory,
@@ -71,6 +126,8 @@ import {
   postArchiveCourse,
   postRestoreCourse,
   postCloneCourse,
+  postTranslationStatus,
+  getTranslationVariants,
   postInstructor,
   getCourseInstructors,
   deleteInstructor,
@@ -110,6 +167,9 @@ import {
   getCourseAtRiskLearnersAdmin,
   getLessonAnalyticsAdmin,
   getCourseLessonAnalyticsAdmin,
+  getLmsSettingsForAdmin,
+  patchLmsSettings,
+  getCourseCalendarForAdmin,
 } from '../../lms/admin-lms.controller';
 import {
   getMyInstructorCourses,
@@ -138,10 +198,17 @@ import {
   getMyCourseProgress,
   getMyCourseCurriculum,
   getMyContinueLearning,
+  getMyLearningStreak,
+  getMyVersionMigrationStatus,
+  postMigrateMyVersion,
   getMyLesson,
   postMyLessonProgress,
   postMyLessonComplete,
   postMyActivityViewed,
+  getMyActivityTranscript,
+  postMyActivityPlaybackStarted,
+  postMyActivityPlaybackProgress,
+  getMyActivityPlayback,
   getMyCertificates,
   getMyCertificateDetail,
   getMyCertificateEligibility,
@@ -200,11 +267,16 @@ import {
   updateCriterionSchema,
   criterionIdParamSchema,
   submissionIdParamSchema,
+  submitSubmissionSchema,
+  submitSelfAssessmentSchema,
   saveDraftSchema,
   reviewSubmissionSchema,
   listSubmissionsQuerySchema,
   submitPeerReviewSchema,
   moderatePeerReviewSchema,
+  replyToFeedbackSchema,
+  requestClarificationSchema,
+  respondToFeedbackAdminSchema,
 } from '../../lms/assignment.validation';
 import {
   postAssignment,
@@ -217,14 +289,42 @@ import {
   postArchiveCriterion,
 } from '../../lms/assignment.controller';
 import {
+  moduleIdParamSchema as projectModuleIdParamSchema,
+  projectIdParamSchema,
+  createProjectSchema,
+  updateProjectSchema,
+  changeProjectStatusSchema,
+  linkArtifactSchema,
+  unlinkArtifactSchema,
+} from '../../lms/project.validation';
+import {
+  postProject,
+  getProjectsForModuleAdmin,
+  getCandidateAssignmentsForModuleAdmin,
+  getProjectByIdAdmin,
+  patchProject,
+  postProjectStatus,
+  postLinkArtifact,
+  postUnlinkArtifact,
+  getMyProjectStatus,
+} from '../../lms/project.controller';
+import {
+  getMyAssignmentOverview,
   postStartSubmission,
   getMySubmissions,
   getMySubmissionDetail,
   patchMySubmission,
   postSubmitSubmission,
+  postSelfAssessSubmission,
   getSubmissionsForReview,
   getSubmissionByIdAdmin,
   postReviewSubmission,
+  postMarkFeedbackViewed,
+  postReplyToFeedback,
+  postRequestClarification,
+  getMyFeedbackMessages,
+  postRespondToFeedbackAdmin,
+  getFeedbackMessagesAdmin,
 } from '../../lms/assignment-submission.controller';
 import {
   getMyPeerReviewQueue,
@@ -257,6 +357,64 @@ import {
   postRevokeCertificate,
   getPublicCertificateVerification,
 } from '../../lms/certificate.controller';
+import { courseAnnouncementsParamSchema, announcementIdParamSchema, createAnnouncementSchema, updateAnnouncementSchema } from '../../lms/announcement.validation';
+import {
+  postAnnouncement,
+  getAnnouncementsForCourseAdmin,
+  getAnnouncementByIdAdmin,
+  patchAnnouncement,
+  postPublishAnnouncement,
+  postArchiveAnnouncement,
+  getMyCourseAnnouncements,
+} from '../../lms/announcement.controller';
+import { courseIdParamSchema as waitlistCourseIdParamSchema, waitlistEntryIdParamSchema, joinWaitlistSchema } from '../../lms/waitlist.validation';
+import { postJoinWaitlist, getMyWaitlistEntry, postClaimWaitlistOffer, getWaitlistForCourseAdmin } from '../../lms/waitlist.controller';
+import { courseIdParamSchema as wishlistCourseIdParamSchema } from '../../lms/wishlist.validation';
+import { postSaveToWishlist, deleteFromWishlist, getMyWishlist } from '../../lms/wishlist.controller';
+import {
+  lessonIdParamSchema as resourceLessonIdParamSchema,
+  resourceIdParamSchema,
+  createResourceSchema,
+  updateResourceSchema,
+  reorderResourcesSchema,
+} from '../../lms/lesson-resource.validation';
+import {
+  postResource,
+  getLessonResourcesAdmin,
+  patchResource,
+  postArchiveResource,
+  postReorderResources,
+  getMyLessonResources,
+  postMyResourceViewed,
+  postMyResourceDownload,
+} from '../../lms/lesson-resource.controller';
+import {
+  lessonIdParamSchema as noteLessonIdParamSchema,
+  courseIdParamSchema as noteCourseIdParamSchema,
+  noteIdParamSchema,
+  createNoteSchema,
+  updateNoteSchema,
+  searchNotesQuerySchema,
+  exportNotesQuerySchema,
+} from '../../lms/learner-note.validation';
+import {
+  postLessonNote,
+  patchMyNote,
+  deleteMyNoteHandler,
+  getMyLessonNotes,
+  getMyCourseNotes,
+  getMyNotesSearch,
+  getMyNotesExport,
+} from '../../lms/learner-note.controller';
+import {
+  lessonIdParamSchema as bookmarkLessonIdParamSchema,
+  courseIdParamSchema as bookmarkCourseIdParamSchema,
+  bookmarkIdParamSchema,
+  createBookmarkSchema,
+} from '../../lms/bookmark.validation';
+import { postLessonBookmark, deleteMyBookmark, getMyLessonBookmarks, getMyCourseBookmarks } from '../../lms/bookmark.controller';
+import { bulkImportSchema } from '../../lms/bulk-enrollment.validation';
+import { postBulkImportEnrollments } from '../../lms/bulk-enrollment.controller';
 
 /**
  * Phase 6 Part 1 — LMS course-engine/category/module routes. Mounted at
@@ -299,6 +457,32 @@ router.post('/admin/categories/reorder', authenticate, adminCategoryPermission, 
 router.post('/admin/categories/:id/archive', authenticate, adminCategoryPermission, validate(categoryIdParamSchema), postArchiveCategory);
 router.post('/admin/categories/:id/restore', authenticate, adminCategoryPermission, validate(categoryIdParamSchema), postRestoreCategory);
 
+// --- Admin: LMS-wide settings (FR-114, FR-110's "Settings" nav entry) -----
+const adminSettingsPermission = requirePermission('course.settings.manage');
+router.get('/admin/settings', authenticate, adminSettingsPermission, getLmsSettingsForAdmin);
+router.patch('/admin/settings', authenticate, adminSettingsPermission, validate(updateLmsSettingsSchema), patchLmsSettings);
+
+// --- Admin: Academic-integrity investigation (T120, FR-116) --------------
+const adminIntegrityPermission = requirePermission('course.academicIntegrity.manage');
+router.post('/admin/academic-integrity/cases', authenticate, adminIntegrityPermission, validate(flagForInvestigationSchema), postFlagForInvestigation);
+router.get('/admin/academic-integrity/cases', authenticate, adminIntegrityPermission, validate(listAcademicIntegrityCasesQuerySchema), getAcademicIntegrityCases);
+router.get('/admin/academic-integrity/cases/:caseId', authenticate, adminIntegrityPermission, validate(academicIntegrityCaseIdParamSchema), getAcademicIntegrityCaseDetail);
+router.post('/admin/academic-integrity/cases/:caseId/resolve', authenticate, adminIntegrityPermission, validate(resolveInvestigationSchema), postResolveInvestigation);
+router.post('/admin/academic-integrity/appeals/:appealId/resolve', authenticate, adminIntegrityPermission, validate(resolveIntegrityAppealSchema), postResolveIntegrityAppeal);
+
+// --- Admin: Cohorts (T085, FR-012/FR-034) ---------------------------------
+const adminCohortPermission = requirePermission('course.cohort.manage');
+router.post('/admin/courses/:courseId/cohorts', authenticate, adminCohortPermission, validate(createCohortSchema), postCohort);
+router.get('/admin/courses/:courseId/cohorts', authenticate, requirePermission('course.view'), validate(cohortCourseIdParamSchema), getCohortsForCourse);
+router.get('/admin/cohorts/:cohortId', authenticate, requirePermission('course.view'), validate(cohortIdParamSchema), getCohortByIdAdmin);
+router.patch('/admin/cohorts/:cohortId', authenticate, adminCohortPermission, validate(updateCohortSchema), patchCohort);
+router.post('/admin/cohorts/:cohortId/members', authenticate, adminCohortPermission, validate(addCohortMemberSchema), postCohortMember);
+router.get('/admin/cohorts/:cohortId/members', authenticate, requirePermission('course.view'), validate(cohortIdParamSchema), getCohortMembers);
+router.delete('/admin/cohorts/:cohortId/members/:memberId', authenticate, adminCohortPermission, validate(cohortMemberIdParamSchema), deleteCohortMemberAdmin);
+router.put('/admin/cohorts/:cohortId/schedule/:moduleId', authenticate, adminCohortPermission, validate(setCohortModuleScheduleSchema), putCohortModuleSchedule);
+router.delete('/admin/cohorts/:cohortId/schedule/:moduleId', authenticate, adminCohortPermission, validate(cohortModuleParamSchema), deleteCohortModuleScheduleAdmin);
+router.get('/admin/cohorts/:cohortId/schedule', authenticate, requirePermission('course.view'), validate(cohortIdParamSchema), getCohortModuleSchedules);
+
 // --- Admin: courses -------------------------------------------------------
 router.post('/admin/courses', authenticate, requirePermission('course.create'), validate(createCourseSchema), postCourse);
 router.get('/admin/courses', authenticate, requirePermission('course.view'), validate(adminCourseQuerySchema), getCoursesAdmin);
@@ -312,6 +496,11 @@ router.post('/admin/courses/:id/archive', authenticate, requirePermission('cours
 router.post('/admin/courses/:id/restore', authenticate, requirePermission('course.archive'), validate(courseIdParamSchema), postRestoreCourse);
 // 004 US8 — cloning creates a brand-new course, so it reuses `course.create` (the same permission that gates authoring a course from scratch), not `course.update`.
 router.post('/admin/courses/:id/clone', authenticate, requirePermission('course.create'), validate(cloneCourseSchema), postCloneCourse);
+
+// 004 Course Translation Management batch (FR-101) — reuses `course.update`,
+// the same baseline every other course-metadata-editing action uses.
+router.post('/admin/courses/:id/translation-status', authenticate, requirePermission('course.update'), validate(changeTranslationStatusSchema), postTranslationStatus);
+router.get('/admin/courses/:id/translations', authenticate, requirePermission('course.view'), validate(courseIdParamSchema), getTranslationVariants);
 
 // --- Admin: instructor assignment -----------------------------------------
 const manageInstructors = requirePermission('course.manageInstructors');
@@ -354,6 +543,15 @@ router.patch('/admin/activities/:activityId', authenticate, manageModules, valid
 router.post('/admin/lessons/:lessonId/activities/reorder', authenticate, manageModules, validate(reorderActivitiesSchema), postReorderActivities);
 router.post('/admin/activities/:activityId/archive', authenticate, manageModules, validate(activityIdParamSchema), postArchiveActivity);
 
+// --- Admin: downloadable resources (004 Downloadable Resource Catalog batch, FR-049) -
+// Reuses `course.module.manage` — same authoring tier as activities above (a
+// resource is content belonging to a lesson, not a materially different privilege).
+router.post('/admin/lessons/:lessonId/resources', authenticate, manageModules, validate(createResourceSchema), postResource);
+router.get('/admin/lessons/:lessonId/resources', authenticate, requirePermission('course.view'), validate(resourceLessonIdParamSchema), getLessonResourcesAdmin);
+router.patch('/admin/resources/:resourceId', authenticate, manageModules, validate(updateResourceSchema), patchResource);
+router.post('/admin/lessons/:lessonId/resources/reorder', authenticate, manageModules, validate(reorderResourcesSchema), postReorderResources);
+router.post('/admin/resources/:resourceId/archive', authenticate, manageModules, validate(resourceIdParamSchema), postArchiveResource);
+
 // --- Admin: quizzes + questions (004 US3 Quiz System batch) ---------------
 // Reuses `course.module.manage` — same tier lesson/activity authoring
 // already uses (a quiz is content belonging to a lesson, not a materially
@@ -369,6 +567,14 @@ router.patch('/admin/questions/:questionId', authenticate, manageModules, valida
 router.post('/admin/questions/:questionId/archive', authenticate, manageModules, validate(questionIdParamSchema), postArchiveQuestion);
 router.post('/admin/quizzes/:quizId/questions/reorder', authenticate, manageModules, validate(reorderQuestionsSchema), postReorderQuestions);
 
+// --- Admin: Question Bank (T107, FR-064) — same permission tier as quizzes above.
+router.post('/admin/courses/:courseId/question-bank', authenticate, manageModules, validate(createBankItemSchema), postBankItem);
+router.get('/admin/courses/:courseId/question-bank', authenticate, requirePermission('course.view'), validate(listBankItemsQuerySchema), getBankItemsForCourse);
+router.get('/admin/question-bank/:itemId', authenticate, requirePermission('course.view'), validate(bankItemIdParamSchema), getBankItemByIdAdmin);
+router.patch('/admin/question-bank/:itemId', authenticate, manageModules, validate(updateBankItemSchema), patchBankItem);
+router.post('/admin/question-bank/:itemId/archive', authenticate, manageModules, validate(bankItemIdParamSchema), postArchiveBankItem);
+router.post('/admin/quizzes/:quizId/generate-from-bank', authenticate, manageModules, validate(generateQuestionsFromBankSchema), postGenerateQuestionsFromBank);
+
 // --- Admin: assignments + rubric criteria (004 US4 Assignment System batch) -
 // Same permission tier as quizzes above — an assignment is content
 // belonging to a lesson, reviewed by the same admin/instructor tier.
@@ -381,10 +587,24 @@ router.post('/admin/assignments/:assignmentId/criteria', authenticate, manageMod
 router.patch('/admin/criteria/:criterionId', authenticate, manageModules, validate(updateCriterionSchema), patchCriterion);
 router.post('/admin/criteria/:criterionId/archive', authenticate, manageModules, validate(criterionIdParamSchema), postArchiveCriterion);
 
+// --- Admin: projects + artifact linking (004 Project-based Learning batch, FR-077) -
+// Same permission tier as assignments above — a project is module-scoped
+// authoring content, reviewed by the same admin/instructor tier.
+router.post('/admin/modules/:moduleId/projects', authenticate, manageModules, validate(createProjectSchema), postProject);
+router.get('/admin/modules/:moduleId/projects', authenticate, requirePermission('course.view'), validate(projectModuleIdParamSchema), getProjectsForModuleAdmin);
+router.get('/admin/modules/:moduleId/assignments', authenticate, requirePermission('course.view'), validate(projectModuleIdParamSchema), getCandidateAssignmentsForModuleAdmin);
+router.get('/admin/projects/:projectId', authenticate, requirePermission('course.view'), validate(projectIdParamSchema), getProjectByIdAdmin);
+router.patch('/admin/projects/:projectId', authenticate, manageModules, validate(updateProjectSchema), patchProject);
+router.post('/admin/projects/:projectId/status', authenticate, manageModules, validate(changeProjectStatusSchema), postProjectStatus);
+router.post('/admin/projects/:projectId/artifacts', authenticate, manageModules, validate(linkArtifactSchema), postLinkArtifact);
+router.post('/admin/projects/:projectId/artifacts/:assignmentId/unlink', authenticate, manageModules, validate(unlinkArtifactSchema), postUnlinkArtifact);
+
 // --- Admin/reviewer: submissions (004 US4) ---------------------------------
 router.get('/admin/assignments/:assignmentId/submissions', authenticate, manageModules, validate(listSubmissionsQuerySchema), getSubmissionsForReview);
 router.get('/admin/submissions/:submissionId', authenticate, manageModules, validate(submissionIdParamSchema), getSubmissionByIdAdmin);
 router.post('/admin/submissions/:submissionId/review', authenticate, manageModules, validate(reviewSubmissionSchema), postReviewSubmission);
+router.post('/admin/submissions/:submissionId/feedback/respond', authenticate, manageModules, validate(respondToFeedbackAdminSchema), postRespondToFeedbackAdmin);
+router.get('/admin/submissions/:submissionId/feedback/messages', authenticate, manageModules, validate(submissionIdParamSchema), getFeedbackMessagesAdmin);
 
 // --- Admin: peer review moderation (004 US9 Peer Review batch, FR-076) -----
 // Reuses `course.manageInstructors` — same tier as `CourseReview` moderation
@@ -408,6 +628,23 @@ router.post('/admin/certificates/:certificateId/revoke', authenticate, manageIns
 router.get('/admin/courses/:courseId/reviews', authenticate, requirePermission('course.view'), validate(reviewCourseIdParamSchema), getCourseReviewsAdmin);
 router.post('/admin/reviews/:reviewId/moderate', authenticate, manageInstructors, validate(moderateReviewSchema), postModerateReview);
 
+// --- Admin: course announcements (004 Course Announcements batch, FR-102) -
+// Reuses `course.module.manage` — an announcement is content authored for
+// a course, the same tier lesson/quiz/assignment authoring already uses.
+router.post('/admin/courses/:courseId/announcements', authenticate, manageModules, validate(createAnnouncementSchema), postAnnouncement);
+router.get('/admin/courses/:courseId/announcements', authenticate, requirePermission('course.view'), validate(courseAnnouncementsParamSchema), getAnnouncementsForCourseAdmin);
+router.get('/admin/announcements/:announcementId', authenticate, requirePermission('course.view'), validate(announcementIdParamSchema), getAnnouncementByIdAdmin);
+router.patch('/admin/announcements/:announcementId', authenticate, manageModules, validate(updateAnnouncementSchema), patchAnnouncement);
+router.post('/admin/announcements/:announcementId/publish', authenticate, manageModules, validate(announcementIdParamSchema), postPublishAnnouncement);
+router.post('/admin/announcements/:announcementId/archive', authenticate, manageModules, validate(announcementIdParamSchema), postArchiveAnnouncement);
+
+// --- Admin: waitlist (004 Waitlist batch, FR-028/029) ----------------------
+// Read-only roster reuses `course.view` — the same baseline every other
+// admin read endpoint above already uses; sweep-and-advance (offer
+// expiry/next-in-line) runs as a side effect of the read itself, not a
+// separate write endpoint.
+router.get('/admin/courses/:courseId/waitlist', authenticate, requirePermission('course.view'), validate(waitlistCourseIdParamSchema), getWaitlistForCourseAdmin);
+
 // --- Admin: enrollments (Phase 6 Part 2B, FR-112) --------------------------
 // Enrollment grant/lifecycle actions reuse `course.manageInstructors` —
 // the existing "administers who has privileged access to a course" tier
@@ -424,6 +661,12 @@ router.post('/admin/enrollments/:id/extend-access', authenticate, manageInstruct
 router.post('/admin/enrollments/:id/complete', authenticate, manageInstructors, validate(overrideCompleteSchema), postOverrideComplete);
 router.post('/admin/enrollments/:id/reset-progress', authenticate, manageInstructors, validate(resetProgressSchema), postResetProgress);
 
+// --- Admin: bulk CSV enrollment import (004 Bulk CSV Import batch, FR-032) -
+// Same `course.manageInstructors` tier as every other enrollment-granting
+// action above — bulk import is many individual admin grants, not a
+// materially different privilege.
+router.post('/admin/courses/:id/enrollments/bulk-import', authenticate, manageInstructors, validate(bulkImportSchema), postBulkImportEnrollments);
+
 // --- Admin: Learning Analytics & At-Risk Detection (004 FR-105–FR-108) -----
 // Read-only analytics reuse `course.view` — the same baseline every other
 // admin analytics/read endpoint above already uses, never a new
@@ -432,6 +675,7 @@ const analyticsView = requirePermission('course.view');
 router.get('/admin/enrollments/:id/analytics', authenticate, analyticsView, validate(enrollmentIdParamSchema), getEnrollmentAnalyticsAdmin);
 router.get('/admin/enrollments/:id/at-risk', authenticate, analyticsView, validate(enrollmentIdParamSchema), getEnrollmentAtRiskAdmin);
 router.get('/admin/courses/:id/analytics', authenticate, analyticsView, validate(courseIdParamSchema), getCourseAnalyticsAdmin);
+router.get('/admin/courses/:id/calendar', authenticate, requirePermission('course.view'), validate(courseIdParamSchema), getCourseCalendarForAdmin);
 router.get('/admin/courses/:id/at-risk-learners', authenticate, analyticsView, validate(courseIdParamSchema), getCourseAtRiskLearnersAdmin);
 router.get('/admin/lessons/:lessonId/analytics', authenticate, analyticsView, validate(lessonIdParamSchema), getLessonAnalyticsAdmin);
 router.get('/admin/courses/:id/lessons/analytics', authenticate, analyticsView, validate(courseIdParamSchema), getCourseLessonAnalyticsAdmin);
@@ -477,6 +721,10 @@ router.get('/me/courses/:courseId/access', authenticate, meBaseline, validate(me
 router.get('/me/courses/:courseId/progress', authenticate, meBaseline, validate(meCourseIdParamSchema), getMyCourseProgress);
 router.get('/me/courses/:courseId/curriculum', authenticate, meBaseline, validate(meCourseIdParamSchema), getMyCourseCurriculum);
 router.get('/me/courses/:courseId/continue-learning', authenticate, meBaseline, validate(meCourseIdParamSchema), getMyContinueLearning);
+router.get('/me/streak', authenticate, meBaseline, getMyLearningStreak);
+router.get('/me/enrollments/:id/version-status', authenticate, meBaseline, validate(enrollmentIdParamSchema), getMyVersionMigrationStatus);
+router.post('/me/enrollments/:id/migrate-version', authenticate, meBaseline, validate(enrollmentIdParamSchema), postMigrateMyVersion);
+router.get('/me/courses/:courseId/announcements', authenticate, meBaseline, validate(meCourseIdParamSchema), getMyCourseAnnouncements);
 router.get('/me/lessons/:lessonId', authenticate, meBaseline, validate(lessonIdParamSchema), getMyLesson);
 router.post('/me/lessons/:lessonId/progress', authenticate, meBaseline, validate(updateLessonProgressSchema), postMyLessonProgress);
 router.post('/me/lessons/:lessonId/complete', authenticate, meBaseline, validate(completeLessonSchema), postMyLessonComplete);
@@ -485,6 +733,39 @@ router.post('/me/lessons/:lessonId/complete', authenticate, meBaseline, validate
 // docs/lms/COMPLETION_ENGINE.md). Reuses the existing admin
 // `activityIdParamSchema` — the params shape is identical.
 router.post('/me/activities/:activityId/viewed', authenticate, meBaseline, validate(activityIdParamSchema), postMyActivityViewed);
+// 004 Captions + Transcript Support batch (FR-044/FR-046) — downloadable
+// transcript, generated server-side from `transcriptSegments`.
+router.get('/me/activities/:activityId/transcript', authenticate, meBaseline, validate(activityIdParamSchema), getMyActivityTranscript);
+// 004 PiP + Video Playback Telemetry batch (FR-040) — VIDEO-only telemetry,
+// distinct from the coarser lesson-level `/me/lessons/:lessonId/progress`.
+router.post('/me/activities/:activityId/playback/started', authenticate, meBaseline, validate(activityIdParamSchema), postMyActivityPlaybackStarted);
+router.post('/me/activities/:activityId/playback/progress', authenticate, meBaseline, validate(playbackProgressSchema), postMyActivityPlaybackProgress);
+router.get('/me/activities/:activityId/playback', authenticate, meBaseline, validate(activityIdParamSchema), getMyActivityPlayback);
+
+// --- Student-facing learner notes (004 Learner Notes & Bookmarks batch, FR-058) -
+// STRICTLY private (FR-033) — there is deliberately no admin-facing route
+// for this entity anywhere in this file. `/me/notes/search` and
+// `/me/notes/export` are registered BEFORE any `/me/notes/:noteId`-shaped
+// route so Express never mistakes "search"/"export" for a noteId param.
+router.get('/me/notes/search', authenticate, meBaseline, validate(searchNotesQuerySchema), getMyNotesSearch);
+router.get('/me/notes/export', authenticate, meBaseline, validate(exportNotesQuerySchema), getMyNotesExport);
+router.post('/me/lessons/:lessonId/notes', authenticate, meBaseline, validate(createNoteSchema), postLessonNote);
+router.get('/me/lessons/:lessonId/notes', authenticate, meBaseline, validate(noteLessonIdParamSchema), getMyLessonNotes);
+router.get('/me/courses/:courseId/notes', authenticate, meBaseline, validate(noteCourseIdParamSchema), getMyCourseNotes);
+router.patch('/me/notes/:noteId', authenticate, meBaseline, validate(updateNoteSchema), patchMyNote);
+router.delete('/me/notes/:noteId', authenticate, meBaseline, validate(noteIdParamSchema), deleteMyNoteHandler);
+
+// --- Student-facing bookmarks (004 Learner Notes & Bookmarks batch, FR-059) -
+// Same strict privacy model as notes above — no admin route exists.
+router.post('/me/lessons/:lessonId/bookmarks', authenticate, meBaseline, validate(createBookmarkSchema), postLessonBookmark);
+router.get('/me/lessons/:lessonId/bookmarks', authenticate, meBaseline, validate(bookmarkLessonIdParamSchema), getMyLessonBookmarks);
+router.get('/me/courses/:courseId/bookmarks', authenticate, meBaseline, validate(bookmarkCourseIdParamSchema), getMyCourseBookmarks);
+router.delete('/me/bookmarks/:bookmarkId', authenticate, meBaseline, validate(bookmarkIdParamSchema), deleteMyBookmark);
+
+// --- Student-facing downloadable resources (004 Downloadable Resource Catalog batch, FR-049) -
+router.get('/me/lessons/:lessonId/resources', authenticate, meBaseline, validate(resourceLessonIdParamSchema), getMyLessonResources);
+router.post('/me/lesson-resources/:resourceId/viewed', authenticate, meBaseline, validate(resourceIdParamSchema), postMyResourceViewed);
+router.post('/me/lesson-resources/:resourceId/download', authenticate, meBaseline, validate(resourceIdParamSchema), postMyResourceDownload);
 
 // --- Student-facing quiz attempts (004 US3 Quiz System batch) -------------
 router.get('/me/quizzes/:quizId', authenticate, meBaseline, validate(quizIdParamSchema), getMyQuizOverview);
@@ -493,12 +774,29 @@ router.get('/me/quiz-attempts/:attemptId', authenticate, meBaseline, validate(at
 router.post('/me/quiz-attempts/:attemptId/answers/:questionId', authenticate, meBaseline, validate(submitAnswerSchema), postSaveAnswer);
 router.post('/me/quiz-attempts/:attemptId/submit', authenticate, meBaseline, validate(attemptIdParamSchema), postSubmitAttempt);
 
+// --- Student-facing projects (004 Project-based Learning batch, FR-077) ----
+router.get('/me/projects/:projectId', authenticate, meBaseline, validate(projectIdParamSchema), getMyProjectStatus);
+
 // --- Student-facing assignment submissions (004 US4 Assignment System batch) -
+// 004 Broader Assessment Types batch (FR-068) — the overview route must be
+// registered before the more specific `/submissions` suffix routes below
+// (both share the `:assignmentId` param, but Express matches by path shape
+// first, so ordering here is only a readability convention, not a
+// correctness requirement — still kept adjacent for discoverability).
+router.get('/me/assignments/:assignmentId', authenticate, meBaseline, validate(assignmentIdParamSchema), getMyAssignmentOverview);
 router.post('/me/assignments/:assignmentId/submissions', authenticate, meBaseline, validate(assignmentIdParamSchema), postStartSubmission);
 router.get('/me/assignments/:assignmentId/submissions', authenticate, meBaseline, validate(assignmentIdParamSchema), getMySubmissions);
 router.get('/me/submissions/:submissionId', authenticate, meBaseline, validate(submissionIdParamSchema), getMySubmissionDetail);
 router.patch('/me/submissions/:submissionId', authenticate, meBaseline, validate(saveDraftSchema), patchMySubmission);
-router.post('/me/submissions/:submissionId/submit', authenticate, meBaseline, validate(submissionIdParamSchema), postSubmitSubmission);
+router.post('/me/submissions/:submissionId/submit', authenticate, meBaseline, validate(submitSubmissionSchema), postSubmitSubmission);
+// 004 Broader Assessment Types batch (FR-068) — SELF_ASSESSMENT/SKILL_RATING's own submit+outcome path.
+router.post('/me/submissions/:submissionId/self-assess', authenticate, meBaseline, validate(submitSelfAssessmentSchema), postSelfAssessSubmission);
+
+// --- Assignment Feedback Interaction, learner side (004, FR-078, T067) -----
+router.post('/me/submissions/:submissionId/feedback/viewed', authenticate, meBaseline, validate(submissionIdParamSchema), postMarkFeedbackViewed);
+router.post('/me/submissions/:submissionId/feedback/reply', authenticate, meBaseline, validate(replyToFeedbackSchema), postReplyToFeedback);
+router.post('/me/submissions/:submissionId/feedback/clarify', authenticate, meBaseline, validate(requestClarificationSchema), postRequestClarification);
+router.get('/me/submissions/:submissionId/feedback/messages', authenticate, meBaseline, validate(submissionIdParamSchema), getMyFeedbackMessages);
 
 // --- Student-facing peer review (004 US9 Peer Review batch, FR-076) --------
 router.get('/me/peer-review-queue', authenticate, meBaseline, getMyPeerReviewQueue);
@@ -512,12 +810,25 @@ router.get('/me/certificates/:certificateId', authenticate, meBaseline, validate
 router.get('/me/courses/:courseId/certificate-eligibility', authenticate, meBaseline, validate(certificateCourseIdParamSchema), getMyCertificateEligibility);
 router.post('/me/courses/:courseId/certificate', authenticate, meBaseline, validate(certificateCourseIdParamSchema), postMyCertificate);
 
+// --- Student-facing academic-integrity cases (T120, FR-116) ---------------
+router.get('/me/academic-integrity/cases', authenticate, meBaseline, getMyAcademicIntegrityCases);
+
 // --- Student-facing reviews, recommendations, catalog (004 Discovery & Recommendations batch) -
 router.get('/me/courses/:courseId/review', authenticate, meBaseline, validate(reviewCourseIdParamSchema), getMyCourseReview);
 router.get('/me/courses/:courseId/review-eligibility', authenticate, meBaseline, validate(reviewCourseIdParamSchema), getMyReviewEligibility);
 router.post('/me/courses/:courseId/review', authenticate, meBaseline, validate(submitReviewSchema), postMyCourseReview);
 router.get('/me/recommendations', authenticate, meBaseline, getMyRecommendations);
 router.get('/me/catalog', authenticate, meBaseline, getMyCatalog);
+
+// --- Student-facing waitlist (004 Waitlist batch, FR-028/029) --------------
+router.post('/me/courses/:courseId/waitlist', authenticate, meBaseline, validate(joinWaitlistSchema), postJoinWaitlist);
+router.get('/me/courses/:courseId/waitlist', authenticate, meBaseline, validate(waitlistCourseIdParamSchema), getMyWaitlistEntry);
+router.post('/me/waitlist/:id/claim', authenticate, meBaseline, validate(waitlistEntryIdParamSchema), postClaimWaitlistOffer);
+
+// --- Student-facing wishlist (004 Wishlist batch, FR-027) ------------------
+router.get('/me/wishlist', authenticate, meBaseline, getMyWishlist);
+router.post('/me/courses/:courseId/wishlist', authenticate, meBaseline, validate(wishlistCourseIdParamSchema), postSaveToWishlist);
+router.delete('/me/courses/:courseId/wishlist', authenticate, meBaseline, validate(wishlistCourseIdParamSchema), deleteFromWishlist);
 
 // --- Organization-admin course assignment (004 FR-033) --------------------
 // `organization.manage_own` — the SAME own-org-scoped permission

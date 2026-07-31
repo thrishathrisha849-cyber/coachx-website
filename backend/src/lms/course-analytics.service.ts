@@ -4,15 +4,16 @@ import { getLessonAnalyticsForCourse } from './lesson-analytics.service';
 
 /**
  * 004 Learning Analytics & At-Risk Detection batch (FR-106) — admin-facing
- * course-level analytics. FR-106 names thirteen fields; nine are built
- * from real, already-persisted data (`Enrollment`, `QuizAttempt`,
- * `Submission`, `Certificate`, `Course.ratingAverage`/`ratingCount` from
- * the Discovery batch, and this batch's own `LearningEvent` log for video
- * engagement) — `refundCorrelation` (no payment/refund system — spec 009
- * territory), `deviceDistribution`, and `languageDistribution` (no
- * device/session-language telemetry) have no owning signal in this
- * codebase and are honestly reported via `notApplicable` rather than
- * fabricated.
+ * course-level analytics. FR-106 names thirteen fields; ten are built from
+ * real, already-persisted data (`Enrollment`, `QuizAttempt`, `Submission`,
+ * `Certificate`, `Course.ratingAverage`/`ratingCount` from the Discovery
+ * batch, this batch's own `LearningEvent` log for video engagement, and —
+ * as of the PiP + Video Playback Telemetry batch, FR-040 —
+ * `ActivityProgress.lastUserAgent` for `deviceDistribution`) —
+ * `refundCorrelation` (no payment/refund system — spec 009 territory) and
+ * `languageDistribution` (no session-language telemetry) still have no
+ * owning signal in this codebase and are honestly reported via
+ * `notApplicable` rather than fabricated.
  */
 
 export interface LessonDropOffEntry {
@@ -43,12 +44,46 @@ export interface CourseAnalytics {
   ratingCount: number;
   refundCorrelation: null;
   certificateRate: number;
-  deviceDistribution: null;
+  /** 004 PiP + Video Playback Telemetry batch (FR-040) — real counts bucketed from `ActivityProgress.lastUserAgent`. `null` means no VIDEO playback telemetry has been recorded for this course yet (not "not applicable" — see `notApplicable` below for genuinely untracked signals). */
+  deviceDistribution: Record<string, number> | null;
   languageDistribution: null;
   notApplicable: string[];
 }
 
-const NOT_APPLICABLE = ['refundCorrelation', 'deviceDistribution', 'languageDistribution'];
+const NOT_APPLICABLE = ['refundCorrelation', 'languageDistribution'];
+
+/**
+ * 004 PiP + Video Playback Telemetry batch (FR-040) — a deliberately coarse,
+ * honest bucketing (no device-detection library is used anywhere in this
+ * codebase — same "raw capture, no fake precision" discipline
+ * `Session.userAgent` already established). Three buckets plus `unknown`
+ * for a missing/unparseable User-Agent.
+ */
+function bucketDeviceFromUserAgent(userAgent: string | null): string {
+  if (!userAgent) return 'unknown';
+  const ua = userAgent.toLowerCase();
+  if (/ipad|tablet/.test(ua)) return 'tablet';
+  if (/mobile|iphone|android/.test(ua)) return 'mobile';
+  return 'desktop';
+}
+
+async function computeDeviceDistribution(courseId: string): Promise<Record<string, number> | null> {
+  const prisma = getPrismaClient();
+  if (!prisma) throw AppError.internal('Database is not connected');
+
+  const rows = await prisma.activityProgress.findMany({
+    where: { lastUserAgent: { not: null }, activity: { lesson: { module: { courseId } } } },
+    select: { lastUserAgent: true },
+  });
+  if (rows.length === 0) return null;
+
+  const distribution: Record<string, number> = {};
+  for (const row of rows) {
+    const bucket = bucketDeviceFromUserAgent(row.lastUserAgent);
+    distribution[bucket] = (distribution[bucket] ?? 0) + 1;
+  }
+  return distribution;
+}
 
 async function computeVideoEngagement(courseId: string): Promise<VideoEngagementSummary> {
   const prisma = getPrismaClient();
@@ -89,6 +124,7 @@ export async function getCourseAnalytics(courseId: string): Promise<CourseAnalyt
     completedEnrollments,
     lessonAnalytics,
     videoEngagement,
+    deviceDistribution,
     gradedAttempts,
     reviewedSubmissions,
     certificatesIssued,
@@ -98,6 +134,7 @@ export async function getCourseAnalytics(courseId: string): Promise<CourseAnalyt
     prisma.enrollment.findMany({ where: { courseId, status: 'COMPLETED' }, select: { enrolledAt: true, completedAt: true } }),
     getLessonAnalyticsForCourse(courseId),
     computeVideoEngagement(courseId),
+    computeDeviceDistribution(courseId),
     prisma.quizAttempt.count({ where: { status: 'GRADED', passed: true, quiz: { lesson: { module: { courseId } } } } }).then(async (passedCount) => {
       const totalGraded = await prisma.quizAttempt.count({ where: { status: 'GRADED', quiz: { lesson: { module: { courseId } } } } });
       return { passedCount, totalGraded };
@@ -147,7 +184,7 @@ export async function getCourseAnalytics(courseId: string): Promise<CourseAnalyt
     ratingCount: course.ratingCount,
     refundCorrelation: null,
     certificateRate,
-    deviceDistribution: null,
+    deviceDistribution,
     languageDistribution: null,
     notApplicable: NOT_APPLICABLE,
   };

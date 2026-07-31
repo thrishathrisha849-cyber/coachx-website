@@ -31,7 +31,11 @@ export type LearningEventType =
   | 'ASSIGNMENT_REVIEWED'
   | 'COURSE_COMPLETED'
   | 'CERTIFICATE_ISSUED'
-  | 'RESOURCE_DOWNLOADED';
+  | 'RESOURCE_DOWNLOADED'
+  // 004 Downloadable Resource Catalog batch (FR-049) — additive, not part
+  // of FR-109's own fixed 19-name taxonomy (see this file's own header note).
+  | 'RESOURCE_VIEWED'
+  | 'RESOURCE_DOWNLOAD_STARTED';
 
 export interface RecordLearningEventInput {
   eventType: LearningEventType;

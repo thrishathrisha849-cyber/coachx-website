@@ -15,6 +15,8 @@ const NAV_ITEMS = [
   { to: '/certificate-templates', label: 'Certificate Templates' },
   { to: '/course-certificates', label: 'Course Certificates' },
   { to: '/course-reviews', label: 'Course Reviews' },
+  { to: '/lms-settings', label: 'LMS Settings' },
+  { to: '/academic-integrity', label: 'Academic Integrity' },
 ];
 
 /** 001 FR-023 admin module registry — populated as each domain module lands (Governance Foundation is the first). */

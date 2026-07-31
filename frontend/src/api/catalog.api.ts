@@ -37,8 +37,9 @@ export interface MemberCatalog {
   popular: CatalogSection<CatalogCourseCard[]>;
   free: CatalogSection<CatalogCourseCard[]>;
   completed: CatalogSection<CatalogCourseCard[]>;
+  /** 004 Wishlist batch (FR-027) — closes part of FR-090's own "wishlist" section. */
+  wishlist: CatalogSection<CatalogCourseCard[]>;
   learningPaths: CatalogSection<never>;
-  wishlist: CatalogSection<never>;
   includedInMembership: CatalogSection<never>;
 }
 

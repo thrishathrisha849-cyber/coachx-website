@@ -5,6 +5,8 @@ const uuid = () => z.string().uuid();
 export const SUBMISSION_FORMATS = ['TEXT', 'LINK', 'FILE_URL', 'IMAGE_URL', 'AUDIO_URL', 'VIDEO_URL'] as const;
 export const LATE_POLICIES = ['REJECT', 'ACCEPT'] as const;
 export const ASSIGNMENT_STATUSES = ['DRAFT', 'PUBLISHED', 'ARCHIVED'] as const;
+/** 004 Broader Assessment Types batch (FR-068) — see `Assignment.assessmentType`'s schema doc comment. */
+export const ASSESSMENT_TYPES = ['STANDARD', 'SELF_ASSESSMENT', 'SKILL_RATING', 'SCENARIO_TASK', 'PORTFOLIO_REVIEW'] as const;
 
 export const lessonIdParamSchema = z.object({ params: z.object({ lessonId: uuid() }) });
 export const assignmentIdParamSchema = z.object({ params: z.object({ assignmentId: uuid() }) });
@@ -35,6 +37,7 @@ export const createAssignmentSchema = z.object({
     passingScore: z.number().int().min(0).max(100000).default(70),
     latePolicy: z.enum(LATE_POLICIES).default('ACCEPT'),
     maxAttempts: z.number().int().min(1).max(100).nullable().optional(),
+    assessmentType: z.enum(ASSESSMENT_TYPES).default('STANDARD'),
     ...peerReviewConfigFields,
   }),
 });
@@ -53,6 +56,7 @@ export const updateAssignmentSchema = z.object({
       passingScore: z.number().int().min(0).max(100000),
       latePolicy: z.enum(LATE_POLICIES),
       maxAttempts: z.number().int().min(1).max(100).nullable(),
+      assessmentType: z.enum(ASSESSMENT_TYPES),
       peerReviewEnabled: z.boolean(),
       peerReviewsRequired: z.number().int().min(0).max(20),
       peerReviewAnonymous: z.boolean(),
@@ -98,6 +102,37 @@ export const updateCriterionSchema = z.object({
 
 export const submissionIdParamSchema = z.object({ params: z.object({ submissionId: uuid() }) });
 
+/**
+ * 004 Academic-integrity investigation batch (FR-116 "originality
+ * declaration") — `z.literal(true)` makes the affirmation a REAL gate
+ * (a `false`/omitted value is rejected with a normal validation error),
+ * not a cosmetic checkbox the server ignores.
+ */
+export const submitSubmissionSchema = z.object({
+  params: z.object({ submissionId: uuid() }),
+  body: z.object({
+    declaredOriginal: z.literal(true, { errorMap: () => ({ message: 'You must confirm this submission is your own original work before submitting' }) }),
+  }),
+});
+
+/**
+ * 004 Broader Assessment Types batch (FR-068) — SELF_ASSESSMENT/
+ * SKILL_RATING's own submit path (distinct from `submitSubmissionSchema`
+ * above, which those two types reject). `.min(1)` — unlike
+ * `reviewSubmissionSchema`'s `.default([])` (which allows a bare REJECT
+ * decision with no scores), a self-assessment IS the criterion scores;
+ * zero of them is not a meaningful self-assessment.
+ */
+export const submitSelfAssessmentSchema = z.object({
+  params: z.object({ submissionId: uuid() }),
+  body: z.object({
+    criterionScores: z
+      .array(z.object({ criterionId: uuid(), pointsAwarded: z.number().int().min(0), comment: z.string().max(2000).optional() }))
+      .min(1)
+      .max(100),
+  }),
+});
+
 export const saveDraftSchema = z.object({
   params: z.object({ submissionId: uuid() }),
   body: z
@@ -107,6 +142,16 @@ export const saveDraftSchema = z.object({
     })
     .refine((b) => b.textBody !== undefined || b.linkUrl !== undefined, { message: 'Provide either textBody or linkUrl' }),
 });
+
+// ============================================================================
+// Assignment Feedback Interaction (004, FR-078, T067)
+// ============================================================================
+
+const feedbackMessageBody = z.object({ body: z.string().trim().min(1).max(5000) });
+
+export const replyToFeedbackSchema = z.object({ params: z.object({ submissionId: uuid() }), body: feedbackMessageBody });
+export const requestClarificationSchema = z.object({ params: z.object({ submissionId: uuid() }), body: feedbackMessageBody });
+export const respondToFeedbackAdminSchema = z.object({ params: z.object({ submissionId: uuid() }), body: feedbackMessageBody });
 
 // ============================================================================
 // Reviewer decision

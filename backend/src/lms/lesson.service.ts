@@ -3,6 +3,7 @@ import { withTransaction, type TransactionClient } from '../database/transaction
 import { normalizeDatabaseError } from '../database/db-error';
 import { recordAuditEvent } from '../database/audit-event.repository';
 import { findModuleById } from './module.repository';
+import { flagTranslationsForSourceLessonUpdate } from './course-translation.service';
 import {
   findLessonById,
   findLessonsByModule,
@@ -13,6 +14,7 @@ import {
 } from './lesson.repository';
 import { findActivitiesByLesson } from './activity.repository';
 import { toAdminLesson, toAdminLessonWithActivities } from './lesson.serializers';
+import { findOrCreateLmsSettings } from './lms-settings.repository';
 import type { AdminLesson, AdminLessonWithActivities } from './lesson.types';
 
 export interface LessonInput {
@@ -49,6 +51,10 @@ export async function createCourseLesson(moduleId: string, input: LessonInput, a
 
     const nextPosition = input.position ?? (await countLessonsByModule(moduleId, tx));
 
+    // 004 LMS-wide Settings batch (FR-114 "default completion rule") —
+    // falls back to the admin-configurable `LmsSettings.defaultLessonCompletionRuleType`.
+    const settings = await findOrCreateLmsSettings(tx);
+
     const lesson = await createLesson(
       {
         module: { connect: { id: moduleId } },
@@ -60,7 +66,7 @@ export async function createCourseLesson(moduleId: string, input: LessonInput, a
         durationMinutes: input.durationMinutes,
         isPreview: input.isPreview ?? false,
         isMandatory: input.isMandatory ?? true,
-        completionRuleType: (input.completionRuleType ?? 'MANUAL') as never,
+        completionRuleType: (input.completionRuleType ?? settings.defaultLessonCompletionRuleType) as never,
         completionRuleTypes: (input.completionRuleTypes ?? []) as never,
         completionRuleValue: input.completionRuleValue as never,
         createdBy: actorId,
@@ -121,6 +127,14 @@ export async function updateCourseLesson(lessonId: string, input: LessonUpdateIn
       },
       tx,
     );
+
+    // FR-101 — "automatically flag a translated version as Outdated when
+    // its source lesson is updated." This lesson's own course is the
+    // SOURCE side of the relation (translation variants point AT it via
+    // `translationOfCourseId`), so every variant of ITS course gets
+    // flagged — never the other way around.
+    const module_ = await findModuleById(existing.moduleId, tx);
+    if (module_) await flagTranslationsForSourceLessonUpdate(module_.courseId, tx);
 
     return toAdminLesson(updated);
   });

@@ -32,8 +32,8 @@ describe('CatalogPage (004 Discovery & Recommendations batch, FR-090)', () => {
       popular: emptySection,
       free: emptySection,
       completed: emptySection,
+      wishlist: { status: 'empty', data: null, reason: 'No courses saved to your wishlist yet.' },
       learningPaths: { status: 'empty', data: null, reason: 'Learning paths are not available yet.' },
-      wishlist: { status: 'empty', data: null, reason: 'Wishlist is not available yet.' },
       includedInMembership: { status: 'empty', data: null, reason: 'Membership-included courses are not available yet.' },
     });
 
@@ -43,7 +43,7 @@ describe('CatalogPage (004 Discovery & Recommendations batch, FR-090)', () => {
     expect(screen.getByText('Next Course')).toBeInTheDocument();
     expect(screen.getByText('Popular pick')).toBeInTheDocument();
     expect(screen.getByText('Learning paths are not available yet.')).toBeInTheDocument();
-    expect(screen.getByText('Wishlist is not available yet.')).toBeInTheDocument();
+    expect(screen.getByText('No courses saved to your wishlist yet.')).toBeInTheDocument();
     expect(screen.getByText('Membership-included courses are not available yet.')).toBeInTheDocument();
   });
 
@@ -52,5 +52,27 @@ describe('CatalogPage (004 Discovery & Recommendations batch, FR-090)', () => {
     renderPage();
 
     expect(await screen.findByText(/Couldn't load your catalog/)).toBeInTheDocument();
+  });
+
+  it('renders real wishlist cards (004 Wishlist batch, FR-027)', async () => {
+    vi.mocked(catalogApi.getMyCatalog).mockResolvedValue({
+      continueLearning: emptySection,
+      recommended: emptySection,
+      newCourses: emptySection,
+      popular: emptySection,
+      free: emptySection,
+      completed: emptySection,
+      wishlist: {
+        status: 'ok',
+        data: [{ courseId: 'c3', courseTitle: 'Saved For Later Course', courseSlug: 'saved-for-later', thumbnailUrl: null, priceType: 'FREE', certificateAvailable: false, cardState: 'LOCKED' }],
+      },
+      learningPaths: { status: 'empty', data: null, reason: 'Learning paths are not available yet.' },
+      includedInMembership: { status: 'empty', data: null, reason: 'Membership-included courses are not available yet.' },
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('Saved For Later Course')).toBeInTheDocument();
+    expect(screen.getByText('Locked')).toBeInTheDocument();
   });
 });

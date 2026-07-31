@@ -72,6 +72,7 @@ const LessonPlayerPage = lazy(() => import('@/pages/LessonPlayerPage').then((m) 
 const QuizStartPage = lazy(() => import('@/pages/QuizStartPage').then((m) => ({ default: m.QuizStartPage })));
 const QuizAttemptPage = lazy(() => import('@/pages/QuizAttemptPage').then((m) => ({ default: m.QuizAttemptPage })));
 const AssignmentPage = lazy(() => import('@/pages/AssignmentPage').then((m) => ({ default: m.AssignmentPage })));
+const ProjectPage = lazy(() => import('@/pages/ProjectPage').then((m) => ({ default: m.ProjectPage })));
 const PeerReviewQueuePage = lazy(() => import('@/pages/PeerReviewQueuePage').then((m) => ({ default: m.PeerReviewQueuePage })));
 const CertificatesPage = lazy(() => import('@/pages/CertificatesPage').then((m) => ({ default: m.CertificatesPage })));
 const CatalogPage = lazy(() => import('@/pages/CatalogPage').then((m) => ({ default: m.CatalogPage })));
@@ -122,6 +123,7 @@ export const router = createBrowserRouter([
           { path: 'quizzes/:quizId', element: withSuspense(<QuizStartPage />) },
           { path: 'quiz-attempts/:attemptId', element: withSuspense(<QuizAttemptPage />) },
           { path: 'assignments/:assignmentId', element: withSuspense(<AssignmentPage />) },
+          { path: 'projects/:projectId', element: withSuspense(<ProjectPage />) },
           { path: 'peer-reviews', element: withSuspense(<PeerReviewQueuePage />) },
           { path: 'certificates', element: withSuspense(<CertificatesPage />) },
           { path: 'certificates/:certificateId', element: withSuspense(<CertificateViewPage />) },

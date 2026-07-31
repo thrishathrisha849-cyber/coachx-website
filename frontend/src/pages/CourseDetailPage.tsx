@@ -17,6 +17,9 @@ import {
   submitCourseReview,
   type PublicCourseReview,
 } from '@/api/course-review.api';
+import { CourseWaitlistPanel } from '@/components/lms/CourseWaitlistPanel';
+import { CourseWishlistPanel } from '@/components/lms/CourseWishlistPanel';
+import { VersionMigrationBanner } from '@/components/lms/VersionMigrationBanner';
 
 /**
  * Phase 6 Part 1 — public course detail. Renders title/description/
@@ -37,6 +40,8 @@ export function CourseDetailPage() {
   const [access, setAccess] = useState<CourseAccessDecision | null>(null);
   const [enrollStatus, setEnrollStatus] = useState<'idle' | 'submitting' | 'error'>('idle');
   const [enrollError, setEnrollError] = useState<string | null>(null);
+  const [courseFull, setCourseFull] = useState(false);
+  const [courseLocked, setCourseLocked] = useState(false);
 
   useEffect(() => {
     setStatus('loading');
@@ -62,7 +67,20 @@ export function CourseDetailPage() {
       navigate(`/learn/${course.id}`);
     } catch (err) {
       setEnrollStatus('error');
-      setEnrollError((err as NormalizedApiError).message ?? 'Could not enroll. Please try again.');
+      const normalized = err as NormalizedApiError;
+      // FR-028/029 — a full course surfaces the waitlist join flow instead
+      // of a plain error; `code` here is the server's disambiguating detail
+      // (see `enrollment.service.ts`'s capacity check), not the generic
+      // CONFLICT top-level error code.
+      if (normalized.status === 409 && (normalized.details as { code?: string } | undefined)?.code === 'COURSE_FULL') {
+        setCourseFull(true);
+      } else if (normalized.status === 400 && (normalized.details as { code?: string } | undefined)?.code === 'COURSE_UNAVAILABLE') {
+        // FR-027 — a paused (ENROLLMENT_PAUSED) course surfaces the
+        // wishlist save flow instead of a plain error.
+        setCourseLocked(true);
+      } else {
+        setEnrollError(normalized.message ?? 'Could not enroll. Please try again.');
+      }
     }
   };
 
@@ -193,12 +211,19 @@ export function CourseDetailPage() {
                 Log in to enroll
               </Link>
             ) : access?.allowed ? (
-              <Link
-                to={`/learn/${course.id}`}
-                className="block w-full rounded-md bg-brand-600 px-4 py-2.5 text-center text-sm font-semibold text-white hover:bg-brand-700"
-              >
-                Continue learning
-              </Link>
+              <>
+                <Link
+                  to={`/learn/${course.id}`}
+                  className="block w-full rounded-md bg-brand-600 px-4 py-2.5 text-center text-sm font-semibold text-white hover:bg-brand-700"
+                >
+                  Continue learning
+                </Link>
+                <VersionMigrationBanner courseId={course.id} />
+              </>
+            ) : courseFull ? (
+              <CourseWaitlistPanel courseId={course.id} onClaimed={() => navigate(`/learn/${course.id}`)} />
+            ) : courseLocked ? (
+              <CourseWishlistPanel courseId={course.id} />
             ) : access?.reason === 'ENROLLMENT_REQUIRED' ? (
               <button
                 type="button"
@@ -310,6 +335,7 @@ function CourseReviewsSection({
               onChange={(e) => setComment(e.target.value)}
               rows={3}
               placeholder="Share your experience with this course…"
+              aria-label="Review comment"
               className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-900"
             />
             {error && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>}

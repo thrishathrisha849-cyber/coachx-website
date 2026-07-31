@@ -37,6 +37,7 @@ describe('CourseEnrollmentsPage (LMS Admin UI batch)', () => {
     vi.mocked(lmsApi.createEnrollmentAdmin).mockReset();
     vi.mocked(lmsApi.suspendEnrollmentAdmin).mockReset();
     vi.mocked(lmsApi.revokeEnrollmentAdmin).mockReset();
+    vi.mocked(lmsApi.bulkImportEnrollmentsAdmin).mockReset();
   });
 
   it('lists enrollments for the course', async () => {
@@ -73,5 +74,35 @@ describe('CourseEnrollmentsPage (LMS Admin UI batch)', () => {
     await user.click(screen.getByRole('button', { name: 'Suspend' }));
 
     expect(lmsApi.suspendEnrollmentAdmin).toHaveBeenCalledWith('enr-1', 'Policy violation');
+  });
+
+  it('imports a CSV file and shows the per-row summary (004 Bulk CSV Import batch, FR-032)', async () => {
+    vi.mocked(lmsApi.listEnrollmentsAdmin).mockResolvedValue({ data: [], meta: { page: 1, pageSize: 100, totalItems: 0, totalPages: 0 } });
+    vi.mocked(lmsApi.bulkImportEnrollmentsAdmin).mockResolvedValue({
+      totalRows: 2,
+      created: 1,
+      duplicates: 0,
+      failed: 1,
+      rows: [
+        { row: 2, email: 'new@example.com', status: 'CREATED', enrollmentId: 'enr-2' },
+        { row: 3, email: 'bad-email', status: 'ERROR', message: 'No user found with this email' },
+      ],
+    });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText('No enrollments found.');
+    const csvFile = new File(['email\nnew@example.com\nbad-email'], 'import.csv', { type: 'text/csv' });
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(fileInput, csvFile);
+
+    await screen.findByText('import.csv');
+    await user.click(screen.getByRole('button', { name: 'Import' }));
+
+    expect(lmsApi.bulkImportEnrollmentsAdmin).toHaveBeenCalledWith('course-1', 'email\nnew@example.com\nbad-email');
+    expect(await screen.findByText(/1 created/)).toBeInTheDocument();
+    expect(screen.getByText(/1 failed/)).toBeInTheDocument();
+    expect(screen.getByText(/No user found with this email/)).toBeInTheDocument();
   });
 });

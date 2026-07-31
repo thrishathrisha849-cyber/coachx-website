@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { getAssignment } from '@/api/assignment.api';
 import { getSubmission, reviewSubmission, moderatePeerReview, type AdminSubmissionDetail } from '@/api/assignment.api';
+import { getFeedbackMessagesAdmin, respondToFeedbackAdmin, type SubmissionFeedbackMessage } from '@/api/assignment.api';
 import type { AdminRubricCriterion } from '@/api/assignment.api';
 import type { NormalizedApiError } from '@/api/client';
 
@@ -71,6 +72,8 @@ export function SubmissionReviewPage() {
       </h1>
       <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
         Status: {submission.status} {submission.isLate && '· Late'}
+        {submission.outcomeLevel && ` · Level: ${submission.outcomeLevel}`}
+        {submission.isSelfAssessed && ' · Self-assessed by the learner'}
       </p>
 
       <div className="mt-4 rounded-lg border border-slate-200 p-4 dark:border-slate-800">
@@ -181,6 +184,99 @@ export function SubmissionReviewPage() {
         </button>
         <button onClick={() => handleDecision('REJECT')} disabled={submitting} className="rounded-md bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60">
           Reject
+        </button>
+      </div>
+
+      {submission.learnerFeedback && <FeedbackConversationPanel submissionId={submissionId} feedbackViewedAt={submission.feedbackViewedAt} />}
+    </div>
+  );
+}
+
+/** 004 Assignment Feedback Interaction batch (FR-078, T067) — instructor side of the conversation: sees whether the learner has viewed the feedback yet, the full reply/clarification-request thread, and can respond. */
+function FeedbackConversationPanel({ submissionId, feedbackViewedAt }: { submissionId: string; feedbackViewedAt: string | null }) {
+  const [messages, setMessages] = useState<SubmissionFeedbackMessage[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function load() {
+    getFeedbackMessagesAdmin(submissionId)
+      .then(setMessages)
+      .catch(() => setMessages([]))
+      .finally(() => setLoaded(true));
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(load, [submissionId]);
+
+  async function handleRespond() {
+    if (!draft.trim()) return;
+    setSending(true);
+    setError(null);
+    try {
+      await respondToFeedbackAdmin(submissionId, draft.trim());
+      setDraft('');
+      load();
+    } catch (err) {
+      setError((err as NormalizedApiError).message ?? 'Could not send your response.');
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const hasClarificationRequest = messages.some((m) => m.type === 'CLARIFICATION_REQUEST');
+
+  return (
+    <div className="mt-6 rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Feedback conversation</h2>
+        <span className="text-xs text-slate-400">{feedbackViewedAt ? `Viewed ${new Date(feedbackViewedAt).toLocaleString()}` : 'Not yet viewed by learner'}</span>
+      </div>
+      {hasClarificationRequest && (
+        <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
+          The learner requested clarification below.
+        </p>
+      )}
+
+      {loaded && messages.length > 0 && (
+        <ul className="mt-3 flex flex-col gap-2">
+          {messages.map((m) => (
+            <li
+              key={m.id}
+              className={`rounded-md border p-2.5 text-sm ${
+                m.authorRole === 'LEARNER' ? 'border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900' : 'border-brand-200 bg-brand-50 dark:border-brand-900 dark:bg-brand-950'
+              }`}
+            >
+              <div className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400">
+                <span>{m.authorRole === 'LEARNER' ? 'Learner' : 'You'}</span>
+                {m.type === 'CLARIFICATION_REQUEST' && (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-800 dark:bg-amber-950 dark:text-amber-300">Clarification requested</span>
+                )}
+              </div>
+              <p className="mt-1 text-slate-700 dark:text-slate-200">{m.body}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+      {loaded && messages.length === 0 && <p className="mt-2 text-sm text-slate-400">No replies yet.</p>}
+
+      <div className="mt-3 flex flex-col gap-2">
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          rows={2}
+          placeholder="Respond to the learner…"
+          aria-label="Instructor response"
+          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+        />
+        {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+        <button
+          onClick={handleRespond}
+          disabled={!draft.trim() || sending}
+          className="self-start rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-60"
+        >
+          {sending ? 'Sending…' : 'Respond'}
         </button>
       </div>
     </div>

@@ -47,6 +47,8 @@ const course = {
   publishedAt: null,
   updatedAt: '2026-01-01T00:00:00.000Z',
   sequencingMode: 'FLEXIBLE',
+  translationOfCourseId: null,
+  translationStatus: null,
 };
 
 const category = {
@@ -97,7 +99,7 @@ describe('LmsCoursesPage (LMS Admin UI batch)', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: '+ New course' }));
+    await user.click(await screen.findByRole('button', { name: '+ New course (quick)' }));
     const createButton = screen.getByRole('button', { name: 'Create' });
     expect(createButton).toBeDisabled();
 

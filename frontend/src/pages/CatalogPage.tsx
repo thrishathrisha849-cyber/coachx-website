@@ -55,7 +55,7 @@ function CatalogSectionBlock({ title, section }: { title: string; section: Catal
   );
 }
 
-/** 004 Discovery & Recommendations batch (FR-090) — the sectioned member catalog view. `learningPaths`/`wishlist`/`includedInMembership` are rendered as honest "not available yet" sections, never fabricated. */
+/** 004 Discovery & Recommendations batch (FR-090) — the sectioned member catalog view. `wishlist` is real (004 Wishlist batch, FR-027); `learningPaths`/`includedInMembership` remain honest "not available yet" sections, never fabricated. */
 export function CatalogPage() {
   const [catalog, setCatalog] = useState<MemberCatalog | null>(null);
   const [status, setStatus] = useState<LoadState>('loading');
@@ -107,10 +107,7 @@ export function CatalogPage() {
         <h2 className="mb-3 text-lg font-bold text-slate-900 dark:text-white">Learning paths</h2>
         <p className="text-sm text-slate-500 dark:text-slate-400">{catalog.learningPaths.reason}</p>
       </section>
-      <section className="mt-8">
-        <h2 className="mb-3 text-lg font-bold text-slate-900 dark:text-white">Wishlist</h2>
-        <p className="text-sm text-slate-500 dark:text-slate-400">{catalog.wishlist.reason}</p>
-      </section>
+      <CatalogSectionBlock title="Wishlist" section={catalog.wishlist} />
       <section className="mt-8">
         <h2 className="mb-3 text-lg font-bold text-slate-900 dark:text-white">Included in your membership</h2>
         <p className="text-sm text-slate-500 dark:text-slate-400">{catalog.includedInMembership.reason}</p>

@@ -12,6 +12,8 @@ import {
   listCategoriesAdmin,
   getCategoryAdmin,
 } from './category.service';
+import { getLmsSettingsAdmin, updateLmsSettingsAdmin } from './lms-settings.service';
+import { getCourseCalendarAdmin } from './course-calendar.service';
 import {
   createNewCourse,
   updateExistingCourse,
@@ -21,7 +23,7 @@ import {
   getCourseAdmin,
   listCoursesAdmin,
 } from './course.service';
-import { listCourseVersions } from './course-version.service';
+import { listCourseVersionsAdmin } from './course-version.service';
 import { assignInstructor, removeInstructor, setPrimaryInstructor, listInstructorsForCourse } from './instructor.service';
 import {
   createCourseModule,
@@ -60,6 +62,7 @@ import {
 } from './enrollment.service';
 import { overrideMarkComplete, overrideReset } from './completion.service';
 import { cloneCourse } from './course-clone.service';
+import { setTranslationStatus, listTranslationVariants } from './course-translation.service';
 import { getLearnerAnalyticsForEnrollment } from './learner-analytics.service';
 import { getCourseAnalytics } from './course-analytics.service';
 import { getLessonAnalytics, getLessonAnalyticsForCourse } from './lesson-analytics.service';
@@ -140,9 +143,9 @@ export const getCourseByIdAdmin = asyncHandler(async (req: Request, res: Respons
   res.status(200).json(buildSuccessResponse(course));
 });
 
-/** 001 FR-099 — non-destructive published-content version history. */
+/** 001 FR-099 — non-destructive published-content version history, now including the Course Versioning Policy batch's changeSummary/effectiveDate/existingLearnerPolicy fields. */
 export const getCourseVersionsAdmin = asyncHandler(async (req: Request, res: Response) => {
-  const versions = await listCourseVersions(req.params.id);
+  const versions = await listCourseVersionsAdmin(req.params.id);
   res.status(200).json(buildSuccessResponse(versions));
 });
 
@@ -200,6 +203,18 @@ export const postRestoreCourse = asyncHandler(async (req: Request, res: Response
 export const postCloneCourse = asyncHandler(async (req: Request, res: Response) => {
   const course = await cloneCourse(req.params.id, req.body, req.user!.id);
   res.status(201).json(buildSuccessResponse(course));
+});
+
+// --- Course Translation Management (004 batch, FR-101) ---------------------
+
+export const postTranslationStatus = asyncHandler(async (req: Request, res: Response) => {
+  const course = await setTranslationStatus(req.params.id, req.body.status, req.user!.id);
+  res.status(200).json(buildSuccessResponse(course));
+});
+
+export const getTranslationVariants = asyncHandler(async (req: Request, res: Response) => {
+  const variants = await listTranslationVariants(req.params.id);
+  res.status(200).json(buildSuccessResponse(variants));
 });
 
 // --- Instructor assignment -----------------------------------------------
@@ -432,4 +447,24 @@ export const getLessonAnalyticsAdmin = asyncHandler(async (req: Request, res: Re
 export const getCourseLessonAnalyticsAdmin = asyncHandler(async (req: Request, res: Response) => {
   const analytics = await getLessonAnalyticsForCourse(req.params.id);
   res.status(200).json(buildSuccessResponse(analytics));
+});
+
+// --- LMS-wide Settings (FR-114, FR-110's "Settings" admin nav entry) -----
+
+/** GET /admin/settings — the single global settings row (lazily created with seeded defaults on first read). */
+export const getLmsSettingsForAdmin = asyncHandler(async (_req: Request, res: Response) => {
+  const settings = await getLmsSettingsAdmin();
+  res.status(200).json(buildSuccessResponse(settings));
+});
+
+/** PATCH /admin/settings — partial update; any field omitted is left unchanged. */
+export const patchLmsSettings = asyncHandler(async (req: Request, res: Response) => {
+  const settings = await updateLmsSettingsAdmin(req.body, req.user!.id);
+  res.status(200).json(buildSuccessResponse(settings));
+});
+
+/** GET /admin/courses/:id/calendar — T092-T095, FR-103's real-data subset (assignment due dates, FIXED_DATE module unlocks, scheduled announcements). */
+export const getCourseCalendarForAdmin = asyncHandler(async (req: Request, res: Response) => {
+  const events = await getCourseCalendarAdmin(req.params.id);
+  res.status(200).json(buildSuccessResponse(events));
 });

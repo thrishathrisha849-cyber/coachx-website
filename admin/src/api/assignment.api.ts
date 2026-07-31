@@ -1,6 +1,10 @@
 import type { ApiSuccessResponse } from '@coachx/shared';
 import { apiClient } from './client';
 
+/** 004 Broader Assessment Types batch (FR-068). */
+export type AssessmentType = 'STANDARD' | 'SELF_ASSESSMENT' | 'SKILL_RATING' | 'SCENARIO_TASK' | 'PORTFOLIO_REVIEW';
+export const ASSESSMENT_TYPES: AssessmentType[] = ['STANDARD', 'SELF_ASSESSMENT', 'SKILL_RATING', 'SCENARIO_TASK', 'PORTFOLIO_REVIEW'];
+
 export interface AdminAssignment {
   id: string;
   lessonId: string;
@@ -16,6 +20,8 @@ export interface AdminAssignment {
   maxAttempts: number | null;
   status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
   version: number;
+  /** 004 Broader Assessment Types batch (FR-068). */
+  assessmentType: AssessmentType;
   peerReviewEnabled: boolean;
   peerReviewsRequired: number;
   peerReviewAnonymous: boolean;
@@ -56,6 +62,8 @@ export interface CreateAssignmentInput {
   passingScore: number;
   latePolicy: string;
   maxAttempts: number | null;
+  /** 004 Broader Assessment Types batch (FR-068). */
+  assessmentType?: AssessmentType;
   peerReviewEnabled?: boolean;
   peerReviewsRequired?: number;
   peerReviewAnonymous?: boolean;
@@ -109,7 +117,11 @@ export interface AdminSubmissionSummary {
   isLate: boolean;
   score: number | null;
   passed: boolean | null;
+  /** 004 Broader Assessment Types batch (FR-068). */
+  outcomeLevel: string | null;
+  isSelfAssessed: boolean;
   learnerFeedback: string | null;
+  feedbackViewedAt: string | null;
 }
 
 export async function listSubmissionsForReview(assignmentId: string, status?: string): Promise<AdminSubmissionSummary[]> {
@@ -164,5 +176,27 @@ export interface ReviewInput {
 
 export async function reviewSubmission(submissionId: string, input: ReviewInput): Promise<AdminSubmissionDetail> {
   const { data } = await apiClient.post<ApiSuccessResponse<AdminSubmissionDetail>>(`/lms/admin/submissions/${submissionId}/review`, input);
+  return data.data;
+}
+
+// --- Assignment Feedback Interaction, instructor side (004, FR-078, T067) --
+
+export interface SubmissionFeedbackMessage {
+  id: string;
+  submissionId: string;
+  authorId: string;
+  authorRole: 'LEARNER' | 'INSTRUCTOR';
+  type: 'REPLY' | 'CLARIFICATION_REQUEST';
+  body: string;
+  createdAt: string;
+}
+
+export async function getFeedbackMessagesAdmin(submissionId: string): Promise<SubmissionFeedbackMessage[]> {
+  const { data } = await apiClient.get<ApiSuccessResponse<SubmissionFeedbackMessage[]>>(`/lms/admin/submissions/${submissionId}/feedback/messages`);
+  return data.data;
+}
+
+export async function respondToFeedbackAdmin(submissionId: string, body: string): Promise<SubmissionFeedbackMessage> {
+  const { data } = await apiClient.post<ApiSuccessResponse<SubmissionFeedbackMessage>>(`/lms/admin/submissions/${submissionId}/feedback/respond`, { body });
   return data.data;
 }

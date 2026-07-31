@@ -3,6 +3,7 @@ import { evaluateCourseAccess, evaluateModuleAccess, getPublishedModulesInOrder 
 import { findEnrollmentForUserAndCourse } from './enrollment.repository';
 import { findPublishedLessonsByModule } from './lesson.repository';
 import { findLessonProgressForEnrollment } from './progress.repository';
+import { findPublishedProjectsForModule } from './project.repository';
 
 export interface CurriculumLessonItem {
   id: string;
@@ -16,6 +17,12 @@ export interface CurriculumLessonItem {
   status: 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED';
 }
 
+/** 004 Project-based Learning batch (FR-077) — just enough for the curriculum sidebar to link into the project page; the full artifact/approval breakdown lives behind `GET /me/projects/:projectId`. */
+export interface CurriculumProjectItem {
+  id: string;
+  title: string;
+}
+
 export interface CurriculumModuleItem {
   id: string;
   title: string;
@@ -25,6 +32,7 @@ export interface CurriculumModuleItem {
   lockReason?: string;
   unlockAt?: Date;
   lessons: CurriculumLessonItem[];
+  projects: CurriculumProjectItem[];
 }
 
 /**
@@ -52,6 +60,7 @@ export async function getCourseCurriculumForLearner(userId: string, courseId: st
   for (const module_ of modules) {
     const moduleAccess = await evaluateModuleAccess(userId, courseId, module_.id);
     const lessons = (await findPublishedLessonsByModule(module_.id)).sort((a, b) => a.position - b.position);
+    const projects = await findPublishedProjectsForModule(module_.id);
 
     result.push({
       id: module_.id,
@@ -61,6 +70,7 @@ export async function getCourseCurriculumForLearner(userId: string, courseId: st
       locked: !moduleAccess.allowed,
       lockReason: moduleAccess.allowed ? undefined : moduleAccess.reason,
       unlockAt: moduleAccess.allowed ? undefined : (moduleAccess.detail?.unlockAt as Date | undefined),
+      projects: projects.map((p) => ({ id: p.id, title: p.title })),
       lessons: lessons.map((l) => ({
         id: l.id,
         title: l.title,
