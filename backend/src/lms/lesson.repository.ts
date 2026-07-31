@@ -29,6 +29,21 @@ export function findPublishedLessonsByModule(moduleId: string, tx?: TransactionC
   });
 }
 
+/**
+ * Cross-cutting polish batch (T124, performance) — the batched sibling of
+ * `findPublishedLessonsByModule`, for callers that need every published
+ * lesson across MULTIPLE modules (e.g. `continue-learning.service.ts`'s
+ * `getContinueLearning`, which previously called the single-module
+ * version once per module in a loop — an N+1 query pattern on a
+ * "Continue Learning" CTA rendered on every course page load).
+ */
+export function findPublishedLessonsByModules(moduleIds: string[], tx?: TransactionClient) {
+  return db(tx).lesson.findMany({
+    where: { moduleId: { in: moduleIds }, status: 'PUBLISHED', deletedAt: null },
+    orderBy: [{ moduleId: 'asc' }, { position: 'asc' }],
+  });
+}
+
 export function countLessonsByModule(moduleId: string, tx?: TransactionClient) {
   return db(tx).lesson.count({ where: { moduleId, deletedAt: null } });
 }

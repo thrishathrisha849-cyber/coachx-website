@@ -16,6 +16,7 @@ import {
   replaceQuestionOptions,
 } from './quiz.repository';
 import { toAdminQuiz, toAdminQuizWithQuestions, toAdminQuestion } from './quiz.serializers';
+import { findOrCreateLmsSettings } from './lms-settings.repository';
 import type { AdminQuiz, AdminQuizWithQuestions, AdminQuestion } from './quiz.types';
 
 // --- Quiz CRUD (admin, reuses `course.module.manage` at the route layer —
@@ -27,7 +28,7 @@ export interface CreateQuizInput {
   title: string;
   instructions?: string;
   quizType: string;
-  passingScorePercent: number;
+  passingScorePercent?: number;
   maxAttempts?: number | null;
   timeLimitMinutes?: number | null;
   randomizeQuestions: boolean;
@@ -42,13 +43,18 @@ export async function createQuizForLesson(lessonId: string, input: CreateQuizInp
   const existing = await findQuizByLessonId(lessonId);
   if (existing) throw AppError.conflict('This lesson already has a quiz attached');
 
+  // 004 LMS-wide Settings batch (FR-114) — `passingScorePercent`/
+  // `maxAttempts` fall back to the admin-configurable global defaults
+  // (`LmsSettings`) rather than a fixed value baked into this service.
+  const settings = await findOrCreateLmsSettings();
+
   const quiz = await createQuizRow({
     lesson: { connect: { id: lessonId } },
     title: input.title,
     instructions: input.instructions ?? null,
     quizType: input.quizType as never,
-    passingScorePercent: input.passingScorePercent,
-    maxAttempts: input.maxAttempts ?? null,
+    passingScorePercent: input.passingScorePercent ?? settings.defaultQuizPassingScorePercent,
+    maxAttempts: input.maxAttempts !== undefined ? input.maxAttempts : settings.defaultQuizMaxAttempts,
     timeLimitMinutes: input.timeLimitMinutes ?? null,
     randomizeQuestions: input.randomizeQuestions,
     randomizeAnswers: input.randomizeAnswers,

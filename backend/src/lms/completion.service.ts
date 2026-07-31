@@ -16,6 +16,11 @@ import { scopedIdempotencyKey } from './lms-idempotency.util';
 import { findQuizByLessonId, hasPassedQuiz } from './quiz.repository';
 import { findAssignmentByLessonId, hasApprovedSubmission } from './assignment.repository';
 import { recordLearningEvent } from './learning-event.service';
+import { findOrCreateLmsSettings } from './lms-settings.repository';
+import { findCourseById } from './course.repository';
+import { getEmailAdapter } from '../auth/email.port';
+import { logger } from '../utils/logger';
+import { recordLessonCompletionForStreak } from './learning-streak.service';
 import type { TransactionClient } from '../database/transaction';
 
 /**
@@ -83,6 +88,15 @@ export async function completeLessonForEnrollment(
       { eventType: 'LESSON_COMPLETED', userId: owningEnrollment.userId, courseId: owningEnrollment.courseId, lessonId, enrollmentId, metadata: { source } },
       tx,
     );
+
+    // FR-057 Learning Streak — "lesson complete" qualifying action.
+    // Deliberately excludes INSTRUCTOR_OVERRIDE/ADMIN_OVERRIDE: an admin
+    // marking a lesson complete on a learner's behalf is not genuine
+    // learner engagement, and FR-057 explicitly bars "artificial
+    // engagement manipulation of the streak."
+    if (source === 'MANUAL_LEARNER' || source === 'SIGNAL_DERIVED') {
+      await recordLessonCompletionForStreak(owningEnrollment.userId, tx);
+    }
   }
 
   return { alreadyCompleted: false };
@@ -160,7 +174,11 @@ async function evaluateAutomaticRules(
     let satisfied: boolean;
     switch (rule) {
       case 'MINIMUM_WATCH_PERCENT': {
-        const threshold = Number((lesson.completionRuleValue as { minPercent?: unknown } | null)?.minPercent ?? 80);
+        const explicitMinPercent = (lesson.completionRuleValue as { minPercent?: unknown } | null)?.minPercent;
+        const threshold =
+          explicitMinPercent !== undefined
+            ? Number(explicitMinPercent)
+            : (await findOrCreateLmsSettings(tx)).defaultVideoWatchThresholdPercent;
         satisfied = currentPercent >= threshold;
         break;
       }
@@ -443,6 +461,26 @@ async function hasLiveOverride(enrollmentId: string, scope: string, targetId: st
 }
 
 /**
+ * Best-effort notification email — same fire-and-forget pattern the
+ * certificate/announcement/waitlist/wishlist emails already use elsewhere
+ * in this codebase (`EmailPort`, sent AFTER the triggering write commits,
+ * a delivery failure is logged and swallowed, never rolled back or
+ * retried). Shared here since this file's three notification points
+ * (course-completed, mark-complete override, reset override) all follow
+ * the identical shape.
+ */
+async function sendLmsNotificationEmail(userId: string, subject: string, text: string, logContext: Record<string, unknown>): Promise<void> {
+  try {
+    const prisma = getPrismaClient();
+    const user = await prisma?.user.findUnique({ where: { id: userId } });
+    if (!user) return;
+    await getEmailAdapter().send({ to: user.email, subject, text });
+  } catch (err) {
+    logger.warn('LMS notification email delivery failed', { ...logContext, userId, error: err instanceof Error ? err.message : err });
+  }
+}
+
+/**
  * Recomputes whether the WHOLE course is now complete for this enrollment
  * and, if so, transitions the Enrollment to COMPLETED — idempotent,
  * server-evaluated, never client-settable.
@@ -482,6 +520,27 @@ export async function recomputeEnrollmentCompletion(enrollmentId: string, course
   // userId`), never `actorId` (an admin-override completion still
   // represents the LEARNER completing the course, analytically).
   await recordLearningEvent({ eventType: 'COURSE_COMPLETED', userId: enrollment.userId, courseId, enrollmentId }, tx);
+
+  // FR-120 "course completed" notification. Fired here rather than after
+  // the caller's own transaction commits — `recomputeEnrollmentCompletion`
+  // doesn't own its transaction (it's always invoked mid-transaction by
+  // one of 6 call sites), and in every one of them this is already the
+  // last write before the transaction closes, so the only remaining
+  // rollback risk is the commit itself failing — the same negligible
+  // window every other best-effort email in this codebase already accepts
+  // by design (see `certificate.service.ts`). `getPrismaClient()` (used by
+  // `sendLmsNotificationEmail`) intentionally reads OUTSIDE `tx` — an
+  // uncommitted row wouldn't be visible to it yet, but the `Course`/`User`
+  // rows being looked up here are pre-existing, unrelated to this write.
+  const course = await findCourseById(courseId, tx);
+  if (course) {
+    await sendLmsNotificationEmail(
+      enrollment.userId,
+      `You completed "${course.title}"`,
+      `Congratulations! You've completed "${course.title}". Check your CoachX dashboard for your certificate (if this course offers one) and what to learn next.`,
+      { courseId, enrollmentId, event: 'course_completed' },
+    );
+  }
 }
 
 // --- Admin/instructor overrides (FR-113) ------------------------------------
@@ -532,6 +591,24 @@ export async function overrideMarkComplete(
       );
 
       await recomputeEnrollmentCompletion(enrollmentId, enrollment.courseId, actorId, tx);
+
+      // FR-113 "...learner notification that is mandatory or optional
+      // depending on the specific action." No admin-configurable
+      // skip-notification toggle exists anywhere in this codebase for
+      // overrides, and spec.md doesn't name which specific actions are
+      // which — treated as mandatory (always sent) here, matching the
+      // "reason"/"audit entry" elements FR-113 lists alongside it, none of
+      // which are skippable either.
+      const overrideCourse = await findCourseById(enrollment.courseId, tx);
+      if (overrideCourse) {
+        const scopeLabel = scope === 'COURSE' ? 'Your course' : scope === 'MODULE' ? 'A module' : 'A lesson';
+        await sendLmsNotificationEmail(
+          enrollment.userId,
+          `Progress update in "${overrideCourse.title}"`,
+          `${scopeLabel} in "${overrideCourse.title}" was manually marked complete by an instructor/admin. Reason given: ${reason}`,
+          { enrollmentId, scope, targetId, event: 'completion_override_mark_complete' },
+        );
+      }
     });
     await outcome.complete({ overridden: true });
   } catch (error) {
@@ -610,6 +687,22 @@ export async function overrideReset(
         { actorType: 'USER', actorId, action: 'lms.completion.override', resourceType: scope.toLowerCase(), resourceId: targetId, reason, metadata: { enrollmentId, action: 'RESET' } },
         tx,
       );
+
+      // FR-113 mandatory learner notification — same reasoning as
+      // `overrideMarkComplete`'s notification above. A reset is more
+      // disruptive to the learner than a mark-complete (their recorded
+      // progress was cleared), so it is at least as deserving of a
+      // notification, not less.
+      const resetCourse = await findCourseById(enrollment.courseId, tx);
+      if (resetCourse) {
+        const scopeLabel = scope === 'COURSE' ? 'Your entire course' : scope === 'MODULE' ? 'A module' : 'A lesson';
+        await sendLmsNotificationEmail(
+          enrollment.userId,
+          `Progress update in "${resetCourse.title}"`,
+          `${scopeLabel} in "${resetCourse.title}" was reset by an instructor/admin. Reason given: ${reason}`,
+          { enrollmentId, scope, targetId, event: 'completion_override_reset' },
+        );
+      }
     });
     await outcome.complete({ reset: true });
   } catch (error) {

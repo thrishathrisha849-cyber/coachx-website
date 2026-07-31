@@ -208,6 +208,11 @@ export const updateCourseSchema = z.object({
       canonicalUrl: z.string().max(500).optional(),
       sequencingMode: z.enum(COURSE_SEQUENCING_MODES).optional(),
       metadata: metadataSchema,
+      // 004 Course Versioning Policy batch (FR-099) — attached to the
+      // CourseVersion snapshot this edit fires, if any.
+      versionChangeSummary: z.string().max(5000).optional(),
+      versionEffectiveDate: z.string().datetime().optional(),
+      versionExistingLearnerPolicy: z.enum(['CONTINUE_CURRENT_VERSION', 'OPTIONAL_MIGRATION', 'MANDATORY_MIGRATION']).optional(),
     })
     .refine((body) => Object.keys(body).length > 0, { message: 'Request body must not be empty' })
     .refine((b) => b.priceType !== 'FREE' || b.priceAmountMinor === undefined || b.priceAmountMinor === 0, {
@@ -231,6 +236,16 @@ export const changeCourseStatusSchema = z.object({
 });
 
 export const courseIdParamSchema = z.object({ params: z.object({ id: uuid() }) });
+
+// 004 Course Translation Management batch (FR-101). OUTDATED is deliberately
+// excluded here — it is only ever set automatically, never by this
+// manually-driven endpoint (see course-translation.service.ts).
+export const COURSE_TRANSLATION_STATUS_VALUES = ['NOT_STARTED', 'IN_PROGRESS', 'REVIEW', 'APPROVED', 'PUBLISHED'] as const;
+
+export const changeTranslationStatusSchema = z.object({
+  params: z.object({ id: uuid() }),
+  body: z.object({ status: z.enum(COURSE_TRANSLATION_STATUS_VALUES) }),
+});
 
 export const publicCourseQuerySchema = z.object({
   query: paginationQuery.extend({
@@ -289,13 +304,14 @@ export const setPrimaryInstructorSchema = z.object({
 // Modules
 // ============================================================================
 
-/** 004 FR-034 — the subset of release-rule types meaningful without a Cohort entity (not built). */
+/** 004 FR-034 — the full named list of drip release-rule types. `COHORT_SCHEDULE` (T085) sources its unlock date from `CohortModuleSchedule`, not `releaseRuleValue` — see that model's own doc comment. */
 const MODULE_RELEASE_RULE_TYPES = [
   'IMMEDIATE',
   'DAYS_AFTER_ENROLLMENT',
   'FIXED_DATE',
   'AFTER_PREVIOUS_MODULE',
   'INSTRUCTOR_RELEASE',
+  'COHORT_SCHEDULE',
 ] as const;
 
 /** 004 FR-052 — only the two types meaningful before Part 2's Lesson model exists. */

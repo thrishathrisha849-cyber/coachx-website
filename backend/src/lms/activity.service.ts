@@ -3,6 +3,8 @@ import { withTransaction } from '../database/transaction';
 import { normalizeDatabaseError } from '../database/db-error';
 import { recordAuditEvent } from '../database/audit-event.repository';
 import { findLessonById } from './lesson.repository';
+import { findModuleById } from './module.repository';
+import { evaluateLessonAccess } from './access-evaluator.service';
 import {
   findActivityById,
   findActivitiesByLesson,
@@ -12,7 +14,7 @@ import {
   reorderActivityPositions,
 } from './activity.repository';
 import { toAdminActivity } from './lesson.serializers';
-import type { AdminLearningActivity } from './lesson.types';
+import type { AdminLearningActivity, TranscriptSegment } from './lesson.types';
 
 export interface ActivityInput {
   type: string;
@@ -25,6 +27,9 @@ export interface ActivityInput {
   fileSizeBytes?: number;
   embedProvider?: string;
   embedResourceId?: string;
+  captionsUrlEn?: string;
+  captionsUrlTa?: string;
+  transcriptSegments?: TranscriptSegment[];
 }
 
 export interface ActivityUpdateInput extends Partial<ActivityInput> {
@@ -51,6 +56,9 @@ export async function createLearningActivity(lessonId: string, input: ActivityIn
         fileSizeBytes: input.fileSizeBytes,
         embedProvider: input.embedProvider,
         embedResourceId: input.embedResourceId,
+        captionsUrlEn: input.captionsUrlEn,
+        captionsUrlTa: input.captionsUrlTa,
+        transcriptSegments: input.transcriptSegments as never,
         createdBy: actorId,
         updatedBy: actorId,
       },
@@ -86,6 +94,10 @@ export async function updateLearningActivity(activityId: string, input: Activity
       bodyText: input.bodyText !== undefined ? input.bodyText : existing.bodyText,
       embedProvider: input.embedProvider !== undefined ? input.embedProvider : existing.embedProvider,
       embedResourceId: input.embedResourceId !== undefined ? input.embedResourceId : existing.embedResourceId,
+      captionsUrlEn: input.captionsUrlEn !== undefined ? input.captionsUrlEn : existing.captionsUrlEn,
+      captionsUrlTa: input.captionsUrlTa !== undefined ? input.captionsUrlTa : existing.captionsUrlTa,
+      transcriptSegments:
+        input.transcriptSegments !== undefined ? input.transcriptSegments : (existing.transcriptSegments as TranscriptSegment[] | null),
     };
     assertActivityTypeInvariants(merged);
 
@@ -101,6 +113,9 @@ export async function updateLearningActivity(activityId: string, input: Activity
         ...(input.fileSizeBytes !== undefined ? { fileSizeBytes: input.fileSizeBytes } : {}),
         ...(input.embedProvider !== undefined ? { embedProvider: input.embedProvider } : {}),
         ...(input.embedResourceId !== undefined ? { embedResourceId: input.embedResourceId } : {}),
+        ...(input.captionsUrlEn !== undefined ? { captionsUrlEn: input.captionsUrlEn } : {}),
+        ...(input.captionsUrlTa !== undefined ? { captionsUrlTa: input.captionsUrlTa } : {}),
+        ...(input.transcriptSegments !== undefined ? { transcriptSegments: input.transcriptSegments as never } : {}),
         ...(input.status !== undefined ? { status: input.status as never } : {}),
         updatedBy: actorId,
       },
@@ -125,6 +140,9 @@ function assertActivityTypeInvariants(activity: {
   bodyText: string | null;
   embedProvider: string | null;
   embedResourceId: string | null;
+  captionsUrlEn?: string | null;
+  captionsUrlTa?: string | null;
+  transcriptSegments?: TranscriptSegment[] | null;
 }): void {
   switch (activity.type) {
     case 'VIDEO':
@@ -144,6 +162,11 @@ function assertActivityTypeInvariants(activity: {
         throw AppError.badRequest('EMBED activities require embedProvider and embedResourceId');
       }
       break;
+  }
+
+  const hasCaptionsOrTranscript = !!activity.captionsUrlEn || !!activity.captionsUrlTa || !!activity.transcriptSegments;
+  if (hasCaptionsOrTranscript && activity.type !== 'VIDEO' && activity.type !== 'AUDIO') {
+    throw AppError.badRequest('Captions and transcripts are only supported for VIDEO and AUDIO activities');
   }
 }
 
@@ -189,4 +212,44 @@ export async function listActivitiesForLessonAdmin(lessonId: string): Promise<Ad
   if (!lesson) throw AppError.notFound('Lesson not found');
   const activities = await findActivitiesByLesson(lessonId);
   return activities.map(toAdminActivity);
+}
+
+function formatTimestamp(totalSeconds: number): string {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  const mm = String(minutes).padStart(2, '0');
+  const ss = String(seconds).padStart(2, '0');
+  return hours > 0 ? `${hours}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+/**
+ * 004 Captions + Transcript Support batch (FR-044/FR-046) — the
+ * "downloadable transcript" requirement. Generated at request time by
+ * joining `transcriptSegments`' text — never separately stored, so there is
+ * nothing to keep in sync. Same access check `recordActivityViewed` uses,
+ * except preview viewers ARE allowed here (reading a transcript is not a
+ * progress-tracking action, so it doesn't need the enrollment `viaPreview`
+ * rejection that action does).
+ */
+export async function getMyActivityTranscriptDownload(userId: string, activityId: string): Promise<{ filename: string; content: string }> {
+  const activity = await findActivityById(activityId);
+  if (!activity || activity.status !== 'PUBLISHED') throw AppError.notFound('Learning activity not found');
+
+  const segments = activity.transcriptSegments as TranscriptSegment[] | null;
+  if (!segments || segments.length === 0) throw AppError.notFound('This activity has no transcript');
+
+  const lesson = await findLessonById(activity.lessonId);
+  if (!lesson) throw AppError.notFound('Learning activity not found');
+
+  const module_ = await findModuleById(lesson.moduleId);
+  if (!module_) throw AppError.notFound('Learning activity not found');
+
+  const access = await evaluateLessonAccess(userId, module_.courseId, lesson.id);
+  if (!access.allowed) throw AppError.forbidden(access.message);
+
+  const content = segments.map((segment) => `[${formatTimestamp(segment.startSeconds)}] ${segment.text}`).join('\n');
+  const filename = `${(activity.title ?? 'transcript').replace(/[^a-z0-9-_]+/gi, '-').toLowerCase()}.txt`;
+
+  return { filename, content };
 }

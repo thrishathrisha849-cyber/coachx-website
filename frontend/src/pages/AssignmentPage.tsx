@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
+  getAssignmentOverview,
   startOrResumeSubmission,
   getMySubmissions,
   saveDraft,
   submitSubmission,
+  submitSelfAssessment,
   getMyPeerReviewsReceived,
+  type PublicAssignmentWithRubric,
   type SubmissionResult,
   type PeerReviewForSubmitter,
 } from '@/api/assignment.api';
 import type { NormalizedApiError } from '@/api/client';
 import { useDocumentHead } from '@/hooks/useDocumentHead';
+import { SubmissionFeedbackPanel } from '@/components/lms/SubmissionFeedbackPanel';
 
 type LoadState = 'loading' | 'ready' | 'error';
 
@@ -29,6 +33,7 @@ export function AssignmentPage() {
   const { assignmentId = '' } = useParams<{ assignmentId: string }>();
   const navigate = useNavigate();
   const [loadState, setLoadState] = useState<LoadState>('loading');
+  const [assignment, setAssignment] = useState<PublicAssignmentWithRubric | null>(null);
   const [current, setCurrent] = useState<SubmissionResult | null>(null);
   const [history, setHistory] = useState<SubmissionResult[]>([]);
   const [peerReviews, setPeerReviews] = useState<PeerReviewForSubmitter[]>([]);
@@ -37,11 +42,17 @@ export function AssignmentPage() {
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [declaredOriginal, setDeclaredOriginal] = useState(false);
+  // 004 Broader Assessment Types batch (FR-068) — SELF_ASSESSMENT/SKILL_RATING's own rating state.
+  const [selfScores, setSelfScores] = useState<Record<string, number>>({});
+  const [selfAssessing, setSelfAssessing] = useState(false);
 
   useDocumentHead({ title: 'Assignment | CoachX' });
 
   const load = useCallback(async () => {
     try {
+      const assignmentOverview = await getAssignmentOverview(assignmentId);
+      setAssignment(assignmentOverview);
       const submission = await startOrResumeSubmission(assignmentId);
       setCurrent(submission);
       setTextBody(submission.textBody ?? '');
@@ -82,12 +93,12 @@ export function AssignmentPage() {
   };
 
   const handleSubmit = async () => {
-    if (!current) return;
+    if (!current || !declaredOriginal) return;
     setSubmitting(true);
     setError(null);
     try {
       await saveDraft(current.id, { textBody, linkUrl: linkUrl || undefined });
-      await submitSubmission(current.id);
+      await submitSubmission(current.id, true);
       load();
     } catch (err) {
       setError((err as NormalizedApiError).message ?? 'Could not submit assignment.');
@@ -106,15 +117,42 @@ export function AssignmentPage() {
     }
   };
 
+  // 004 Broader Assessment Types batch (FR-068) — SELF_ASSESSMENT/SKILL_RATING's own submit+outcome action.
+  const handleSelfAssess = async () => {
+    if (!current || !assignment) return;
+    setSelfAssessing(true);
+    setError(null);
+    try {
+      const scored = assignment.rubricCriteria.map((c) => ({ criterionId: c.id, pointsAwarded: selfScores[c.id] ?? 0 }));
+      await submitSelfAssessment(current.id, scored);
+      load();
+    } catch (err) {
+      setError((err as NormalizedApiError).message ?? 'Could not submit your self-assessment.');
+    } finally {
+      setSelfAssessing(false);
+    }
+  };
+
   if (loadState === 'loading') return <p className="p-6 text-sm text-slate-500">Loading…</p>;
   if (loadState === 'error' || !current) {
     return <p className="p-6 text-sm text-red-600 dark:text-red-400">Couldn't load this assignment. Please refresh the page.</p>;
   }
 
+  const isSelfScoredType = assignment?.assessmentType === 'SELF_ASSESSMENT' || assignment?.assessmentType === 'SKILL_RATING';
+  const ASSESSMENT_TYPE_LABEL: Record<string, string> = {
+    SELF_ASSESSMENT: 'Self-Assessment',
+    SKILL_RATING: 'Skill Rating',
+    SCENARIO_TASK: 'Scenario Task',
+    PORTFOLIO_REVIEW: 'Portfolio Review',
+  };
+
   return (
     <div className="mx-auto max-w-2xl">
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-xl font-bold text-slate-900 dark:text-white">Assignment — Attempt {current.attemptNumber}</h1>
+        <h1 className="text-xl font-bold text-slate-900 dark:text-white">
+          {assignment && ASSESSMENT_TYPE_LABEL[assignment.assessmentType] ? `${ASSESSMENT_TYPE_LABEL[assignment.assessmentType]} — ` : ''}
+          Attempt {current.attemptNumber}
+        </h1>
         <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
           {STATUS_LABEL[current.status] ?? current.status}
         </span>
@@ -126,13 +164,52 @@ export function AssignmentPage() {
         </p>
       )}
 
-      {current.status === 'DRAFT' && (
+      {current.status === 'DRAFT' && isSelfScoredType && assignment && (
+        <div className="flex flex-col gap-3">
+          <p className="text-sm text-slate-600 dark:text-slate-300">Rate yourself against each criterion below — this is your own assessment, not an instructor review.</p>
+          {assignment.rubricCriteria.map((c) => (
+            <div key={c.id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+              <div className="flex items-center justify-between">
+                <label htmlFor={`self-score-${c.id}`} className="text-sm font-medium text-slate-900 dark:text-white">
+                  {c.title}
+                </label>
+                <div className="flex items-center gap-1">
+                  <input
+                    id={`self-score-${c.id}`}
+                    type="number"
+                    min={0}
+                    max={c.maxPoints}
+                    value={selfScores[c.id] ?? 0}
+                    onChange={(e) => setSelfScores((prev) => ({ ...prev, [c.id]: Number(e.target.value) }))}
+                    className="w-20 rounded-md border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900"
+                  />
+                  <span className="text-xs text-slate-400">/ {c.maxPoints}</span>
+                </div>
+              </div>
+              {c.description && <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{c.description}</p>}
+            </div>
+          ))}
+          {assignment.rubricCriteria.length === 0 && <p className="text-sm text-slate-400">No rating criteria have been set up for this assessment yet.</p>}
+          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+          <button
+            type="button"
+            onClick={handleSelfAssess}
+            disabled={selfAssessing || assignment.rubricCriteria.length === 0}
+            className="self-start rounded-md bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
+          >
+            {selfAssessing ? 'Submitting…' : 'Submit self-assessment'}
+          </button>
+        </div>
+      )}
+
+      {current.status === 'DRAFT' && !isSelfScoredType && (
         <div className="flex flex-col gap-3">
           <textarea
             value={textBody}
             onChange={(e) => setTextBody(e.target.value)}
             rows={6}
             placeholder="Write your response…"
+            aria-label="Assignment response"
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
           />
           <input
@@ -140,8 +217,18 @@ export function AssignmentPage() {
             value={linkUrl}
             onChange={(e) => setLinkUrl(e.target.value)}
             placeholder="Link to your work (optional, e.g. a shared drive URL)"
+            aria-label="Link to your work"
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
           />
+          <label className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300">
+            <input
+              type="checkbox"
+              checked={declaredOriginal}
+              onChange={(e) => setDeclaredOriginal(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>I confirm this submission is my own original work.</span>
+          </label>
           {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
           <div className="flex gap-2">
             <button
@@ -155,7 +242,7 @@ export function AssignmentPage() {
             <button
               type="button"
               onClick={handleSubmit}
-              disabled={submitting || (!textBody.trim() && !linkUrl.trim())}
+              disabled={submitting || !declaredOriginal || (!textBody.trim() && !linkUrl.trim())}
               className="rounded-md bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
             >
               {submitting ? 'Submitting…' : 'Submit'}
@@ -179,7 +266,9 @@ export function AssignmentPage() {
         <div className={`mt-4 rounded-lg border p-4 ${current.status === 'APPROVED' ? 'border-green-200 bg-green-50 dark:border-green-900 dark:bg-green-950' : 'border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950'}`}>
           <p className="font-semibold text-slate-900 dark:text-white">
             {current.status === 'APPROVED' ? 'Approved' : 'Rejected'} — Score: {current.score ?? '—'}
+            {current.outcomeLevel && ` · Level: ${current.outcomeLevel}`}
           </p>
+          {current.isSelfAssessed && <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">This outcome is your own self-assessment.</p>}
           {current.learnerFeedback && <p className="mt-2 text-sm text-slate-700 dark:text-slate-200">{current.learnerFeedback}</p>}
         </div>
       )}
@@ -192,6 +281,10 @@ export function AssignmentPage() {
             Start new attempt
           </button>
         </div>
+      )}
+
+      {(current.status === 'APPROVED' || current.status === 'REJECTED' || current.status === 'CHANGES_REQUESTED') && current.learnerFeedback && (
+        <SubmissionFeedbackPanel submission={current} onViewed={setCurrent} />
       )}
 
       {peerReviews.length > 0 && (

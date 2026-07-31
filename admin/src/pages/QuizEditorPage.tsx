@@ -9,6 +9,7 @@ import {
   type AdminQuizWithQuestions,
   type AdminQuestion,
 } from '@/api/quiz.api';
+import { generateQuestionsFromBank, type QuestionBankDifficulty } from '@/api/lms.api';
 import type { NormalizedApiError } from '@/api/client';
 
 const QUIZ_TYPES = ['PRACTICE', 'GRADED', 'MODULE_QUIZ', 'FINAL_ASSESSMENT', 'CERTIFICATION_EXAM', 'DIAGNOSTIC'];
@@ -154,6 +155,68 @@ function QuizManager({ quizId }: { quizId: string }) {
       </div>
 
       <AddQuestionForm quizId={quizId} onAdded={load} />
+      <GenerateFromBankForm quizId={quizId} onGenerated={load} />
+    </div>
+  );
+}
+
+/** 004 Question Bank batch (T107, FR-064) — draws PUBLISHED/APPROVED bank items and copies them into this quiz's real questions. */
+function GenerateFromBankForm({ quizId, onGenerated }: { quizId: string; onGenerated: () => void }) {
+  const [count, setCount] = useState('5');
+  const [category, setCategory] = useState('');
+  const [difficulty, setDifficulty] = useState<QuestionBankDifficulty | ''>('');
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleGenerate() {
+    const requested = Number(count);
+    if (!requested || requested < 1) return;
+    setSubmitting(true);
+    setError(null);
+    setResult(null);
+    try {
+      const outcome = await generateQuestionsFromBank(quizId, {
+        ...(difficulty ? { difficultyDistribution: { [difficulty]: requested } } : { count: requested }),
+        category: category.trim() || undefined,
+      });
+      setResult(`Drew ${outcome.drawn} of ${outcome.requested} requested question(s) from the bank.`);
+      onGenerated();
+    } catch (err) {
+      setError((err as NormalizedApiError).message ?? 'Could not generate questions from the bank.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-lg border border-dashed border-slate-300 p-4 dark:border-slate-700">
+      <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Generate questions from bank</h3>
+      <p className="mt-1 text-xs text-slate-400">Draws randomized, APPROVED &amp; PUBLISHED question bank items and copies them into this quiz.</p>
+      <div className="mt-3 flex flex-wrap items-end gap-2">
+        <label className="text-xs font-medium uppercase tracking-wide text-slate-500">
+          Count
+          <input type="number" min={1} value={count} onChange={(e) => setCount(e.target.value)} className="mt-1 block w-24 rounded-md border border-slate-300 px-3 py-1.5 text-sm font-normal normal-case dark:border-slate-700 dark:bg-slate-900" />
+        </label>
+        <label className="text-xs font-medium uppercase tracking-wide text-slate-500">
+          Difficulty (optional)
+          <select value={difficulty} onChange={(e) => setDifficulty(e.target.value as QuestionBankDifficulty | '')} className="mt-1 block w-32 rounded-md border border-slate-300 px-3 py-1.5 text-sm font-normal normal-case dark:border-slate-700 dark:bg-slate-900">
+            <option value="">Any</option>
+            <option value="EASY">Easy</option>
+            <option value="MEDIUM">Medium</option>
+            <option value="HARD">Hard</option>
+          </select>
+        </label>
+        <label className="text-xs font-medium uppercase tracking-wide text-slate-500">
+          Category (optional)
+          <input value={category} onChange={(e) => setCategory(e.target.value)} className="mt-1 block w-40 rounded-md border border-slate-300 px-3 py-1.5 text-sm font-normal normal-case dark:border-slate-700 dark:bg-slate-900" />
+        </label>
+        <button onClick={handleGenerate} disabled={submitting || !count} className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-60">
+          {submitting ? 'Generating…' : 'Generate'}
+        </button>
+      </div>
+      {result && <p className="mt-2 text-sm text-green-600 dark:text-green-400">{result}</p>}
+      {error && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>}
     </div>
   );
 }

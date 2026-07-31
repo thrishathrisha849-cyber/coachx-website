@@ -14,6 +14,7 @@ import {
   countRubricCriteria,
 } from './assignment.repository';
 import { toAdminAssignment, toAdminAssignmentWithRubric, toAdminRubricCriterion } from './assignment.serializers';
+import { findOrCreateLmsSettings } from './lms-settings.repository';
 import type { AdminAssignment, AdminAssignmentWithRubric, AdminRubricCriterion } from './assignment.types';
 
 // --- Assignment CRUD (admin, reuses `course.module.manage` at the route
@@ -31,6 +32,8 @@ export interface CreateAssignmentInput {
   passingScore: number;
   latePolicy: string;
   maxAttempts?: number | null;
+  /** 004 Broader Assessment Types batch (FR-068). */
+  assessmentType?: string;
   /** FR-076 Peer Review config (004 US9 batch). */
   peerReviewEnabled?: boolean;
   peerReviewsRequired?: number;
@@ -39,12 +42,35 @@ export interface CreateAssignmentInput {
   peerReviewIncludeInGrade?: boolean;
 }
 
+/**
+ * 004 Broader Assessment Types batch (FR-068) — the "level" outcome
+ * dimension, server-derived (never caller-supplied) from a percentage of
+ * the maximum possible score, shared by both the instructor-review path
+ * (`reviewSubmission`) and the self-assessment path
+ * (`submitSelfAssessment`) so the same score always maps to the same
+ * level regardless of who produced it. A fixed 3-band scale — no admin
+ * configuration knob is invented for this (same "don't add a control
+ * with no real effect" discipline `lms-settings.service.ts` established).
+ */
+export function deriveOutcomeLevel(score: number, maxTotal: number): string | null {
+  if (maxTotal <= 0) return null;
+  const percent = (score / maxTotal) * 100;
+  if (percent >= 80) return 'Advanced';
+  if (percent >= 50) return 'Intermediate';
+  return 'Beginner';
+}
+
 export async function createAssignmentForLesson(lessonId: string, input: CreateAssignmentInput, actorId: string): Promise<AdminAssignment> {
   const lesson = await findLessonById(lessonId);
   if (!lesson) throw AppError.notFound('Lesson not found');
 
   const existing = await findAssignmentByLessonId(lessonId);
   if (existing) throw AppError.conflict('This lesson already has an assignment attached');
+
+  // 004 LMS-wide Settings batch (FR-114) — `maxAttempts` falls back to the
+  // admin-configurable `LmsSettings.defaultAssignmentMaxAttempts` rather
+  // than a fixed `null` (unlimited).
+  const settings = await findOrCreateLmsSettings();
 
   const assignment = await createAssignmentRow({
     lesson: { connect: { id: lessonId } },
@@ -57,7 +83,8 @@ export async function createAssignmentForLesson(lessonId: string, input: CreateA
     maxScore: input.maxScore,
     passingScore: input.passingScore,
     latePolicy: input.latePolicy as never,
-    maxAttempts: input.maxAttempts ?? null,
+    maxAttempts: input.maxAttempts !== undefined ? input.maxAttempts : settings.defaultAssignmentMaxAttempts,
+    assessmentType: (input.assessmentType as never) ?? 'STANDARD',
     peerReviewEnabled: input.peerReviewEnabled ?? false,
     peerReviewsRequired: input.peerReviewsRequired ?? 0,
     peerReviewAnonymous: input.peerReviewAnonymous ?? true,
@@ -107,6 +134,7 @@ export async function updateExistingAssignment(id: string, input: Partial<Create
     ...(input.passingScore !== undefined ? { passingScore: input.passingScore } : {}),
     ...(input.latePolicy !== undefined ? { latePolicy: input.latePolicy as never } : {}),
     ...(input.maxAttempts !== undefined ? { maxAttempts: input.maxAttempts } : {}),
+    ...(input.assessmentType !== undefined ? { assessmentType: input.assessmentType as never } : {}),
     ...(input.peerReviewEnabled !== undefined ? { peerReviewEnabled: input.peerReviewEnabled } : {}),
     ...(input.peerReviewsRequired !== undefined ? { peerReviewsRequired: input.peerReviewsRequired } : {}),
     ...(input.peerReviewAnonymous !== undefined ? { peerReviewAnonymous: input.peerReviewAnonymous } : {}),

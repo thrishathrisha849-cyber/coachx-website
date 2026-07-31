@@ -4,6 +4,12 @@
  * inferred from `lesson.validation.ts`'s Zod schemas.
  */
 
+/** 004 Captions + Transcript Support batch (FR-044/FR-046) — one ordered segment of a VIDEO/AUDIO activity's transcript. */
+export interface TranscriptSegment {
+  startSeconds: number;
+  text: string;
+}
+
 /** Public/learner-safe learning-activity shape — no internal audit fields. */
 export interface PublicLearningActivity {
   id: string;
@@ -17,6 +23,9 @@ export interface PublicLearningActivity {
   fileSizeBytes: number | null;
   embedProvider: string | null;
   embedResourceId: string | null;
+  captionsUrlEn: string | null;
+  captionsUrlTa: string | null;
+  transcriptSegments: TranscriptSegment[] | null;
 }
 
 /** Admin/instructor-facing activity shape — includes lifecycle/audit fields. */

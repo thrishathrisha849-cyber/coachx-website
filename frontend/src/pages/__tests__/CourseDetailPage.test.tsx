@@ -61,6 +61,7 @@ describe('CourseDetailPage — enroll CTA (004 US1)', () => {
     vi.mocked(lmsApi.fetchCourseBySlug).mockReset().mockResolvedValue(sampleCourse);
     vi.mocked(lmsApi.getMyCourseAccess).mockReset();
     vi.mocked(lmsApi.enrollInCourse).mockReset();
+    vi.mocked(lmsApi.getMyEnrollments).mockReset().mockResolvedValue([]);
     vi.mocked(courseReviewApi.getCourseReviews).mockReset().mockResolvedValue([]);
     vi.mocked(courseReviewApi.getMyReviewEligibility).mockReset().mockResolvedValue({ eligible: false, reason: 'Not eligible yet.' });
     vi.mocked(courseReviewApi.getMyCourseReview).mockReset().mockResolvedValue(null);
@@ -110,10 +111,99 @@ describe('CourseDetailPage — enroll CTA (004 US1)', () => {
   });
 });
 
+describe('CourseDetailPage — waitlist on a full course (004 Waitlist batch, FR-028/029)', () => {
+  beforeEach(() => {
+    vi.mocked(lmsApi.fetchCourseBySlug).mockReset().mockResolvedValue(sampleCourse);
+    vi.mocked(lmsApi.getMyCourseAccess).mockReset();
+    vi.mocked(lmsApi.enrollInCourse).mockReset();
+    vi.mocked(lmsApi.getMyWaitlistEntry).mockReset();
+    vi.mocked(lmsApi.joinWaitlist).mockReset();
+    vi.mocked(lmsApi.getMyEnrollments).mockReset().mockResolvedValue([]);
+    vi.mocked(courseReviewApi.getCourseReviews).mockReset().mockResolvedValue([]);
+    vi.mocked(courseReviewApi.getMyReviewEligibility).mockReset().mockResolvedValue({ eligible: false, reason: 'Not eligible yet.' });
+    vi.mocked(courseReviewApi.getMyCourseReview).mockReset().mockResolvedValue(null);
+  });
+
+  it('replaces the Enroll button with the waitlist join panel once the enroll attempt comes back COURSE_FULL', async () => {
+    vi.mocked(authContext.useAuth).mockReturnValue({ isAuthenticated: true } as ReturnType<typeof authContext.useAuth>);
+    vi.mocked(lmsApi.getMyCourseAccess).mockResolvedValue({ allowed: false, reason: 'ENROLLMENT_REQUIRED', message: 'Enroll in this course to access it' });
+    vi.mocked(lmsApi.enrollInCourse).mockRejectedValue({ status: 409, code: 'CONFLICT', message: 'This course has reached its enrollment capacity', details: { code: 'COURSE_FULL' } });
+    vi.mocked(lmsApi.getMyWaitlistEntry).mockResolvedValue(null);
+
+    const user = userEvent.setup();
+    renderPage();
+
+    const enrollButton = await screen.findByRole('button', { name: 'Enroll now' });
+    await user.click(enrollButton);
+
+    expect(await screen.findByRole('button', { name: 'Join the waitlist' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Enroll now' })).not.toBeInTheDocument();
+  });
+
+  it('shows a generic error, not the waitlist panel, for a 409 that is not COURSE_FULL', async () => {
+    vi.mocked(authContext.useAuth).mockReturnValue({ isAuthenticated: true } as ReturnType<typeof authContext.useAuth>);
+    vi.mocked(lmsApi.getMyCourseAccess).mockResolvedValue({ allowed: false, reason: 'ENROLLMENT_REQUIRED', message: 'Enroll in this course to access it' });
+    vi.mocked(lmsApi.enrollInCourse).mockRejectedValue({ status: 409, code: 'CONFLICT', message: 'An enrollment for this user and course already exists' });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Enroll now' }));
+
+    expect(await screen.findByText('An enrollment for this user and course already exists')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Join the waitlist' })).not.toBeInTheDocument();
+  });
+});
+
+describe('CourseDetailPage — wishlist on a paused course (004 Wishlist batch, FR-027)', () => {
+  beforeEach(() => {
+    vi.mocked(lmsApi.fetchCourseBySlug).mockReset().mockResolvedValue(sampleCourse);
+    vi.mocked(lmsApi.getMyCourseAccess).mockReset();
+    vi.mocked(lmsApi.enrollInCourse).mockReset();
+    vi.mocked(lmsApi.getMyWishlist).mockReset();
+    vi.mocked(lmsApi.saveToWishlist).mockReset();
+    vi.mocked(lmsApi.getMyEnrollments).mockReset().mockResolvedValue([]);
+    vi.mocked(courseReviewApi.getCourseReviews).mockReset().mockResolvedValue([]);
+    vi.mocked(courseReviewApi.getMyReviewEligibility).mockReset().mockResolvedValue({ eligible: false, reason: 'Not eligible yet.' });
+    vi.mocked(courseReviewApi.getMyCourseReview).mockReset().mockResolvedValue(null);
+  });
+
+  it('replaces the Enroll button with the wishlist save panel once the enroll attempt comes back COURSE_UNAVAILABLE', async () => {
+    vi.mocked(authContext.useAuth).mockReturnValue({ isAuthenticated: true } as ReturnType<typeof authContext.useAuth>);
+    vi.mocked(lmsApi.getMyCourseAccess).mockResolvedValue({ allowed: false, reason: 'ENROLLMENT_REQUIRED', message: 'Enroll in this course to access it' });
+    vi.mocked(lmsApi.enrollInCourse).mockRejectedValue({ status: 400, code: 'VALIDATION_ERROR', message: 'Course is not accepting new enrollment (status: ENROLLMENT_PAUSED)', details: { code: 'COURSE_UNAVAILABLE' } });
+    vi.mocked(lmsApi.getMyWishlist).mockResolvedValue([]);
+
+    const user = userEvent.setup();
+    renderPage();
+
+    const enrollButton = await screen.findByRole('button', { name: 'Enroll now' });
+    await user.click(enrollButton);
+
+    expect(await screen.findByRole('button', { name: /Save to wishlist/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Enroll now' })).not.toBeInTheDocument();
+  });
+
+  it('shows a generic error, not the wishlist panel, for a 400 that is not COURSE_UNAVAILABLE', async () => {
+    vi.mocked(authContext.useAuth).mockReturnValue({ isAuthenticated: true } as ReturnType<typeof authContext.useAuth>);
+    vi.mocked(lmsApi.getMyCourseAccess).mockResolvedValue({ allowed: false, reason: 'ENROLLMENT_REQUIRED', message: 'Enroll in this course to access it' });
+    vi.mocked(lmsApi.enrollInCourse).mockRejectedValue({ status: 400, code: 'VALIDATION_ERROR', message: 'Something else went wrong' });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Enroll now' }));
+
+    expect(await screen.findByText('Something else went wrong')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Save to wishlist/ })).not.toBeInTheDocument();
+  });
+});
+
 describe('CourseDetailPage — reviews (004 Discovery & Recommendations batch, FR-087)', () => {
   beforeEach(() => {
     vi.mocked(lmsApi.fetchCourseBySlug).mockReset().mockResolvedValue(sampleCourse);
     vi.mocked(lmsApi.getMyCourseAccess).mockReset();
+    vi.mocked(lmsApi.getMyEnrollments).mockReset().mockResolvedValue([]);
     vi.mocked(courseReviewApi.getCourseReviews).mockReset();
     vi.mocked(courseReviewApi.getMyReviewEligibility).mockReset();
     vi.mocked(courseReviewApi.getMyCourseReview).mockReset().mockResolvedValue(null);

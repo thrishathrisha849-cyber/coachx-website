@@ -222,6 +222,7 @@ export function QuizAttemptPage() {
                 value={answers[q.id]?.answerText ?? ''}
                 onChange={(e) => setAnswers((prev) => ({ ...prev, [q.id]: { answerText: e.target.value } }))}
                 onBlur={(e) => handleAnswerChange(q, { answerText: e.target.value })}
+                aria-label={`Answer to question ${i + 1}`}
                 className="mt-3 w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
               />
             )}
@@ -232,6 +233,7 @@ export function QuizAttemptPage() {
                 value={answers[q.id]?.answerText ?? ''}
                 onChange={(e) => setAnswers((prev) => ({ ...prev, [q.id]: { answerText: e.target.value } }))}
                 onBlur={(e) => handleAnswerChange(q, { answerText: e.target.value })}
+                aria-label={`Answer to question ${i + 1}`}
                 className="mt-3 w-full rounded-md border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
               />
             )}

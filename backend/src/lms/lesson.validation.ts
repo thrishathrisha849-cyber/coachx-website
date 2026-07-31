@@ -44,7 +44,11 @@ const lessonBodyBase = z.object({
   durationMinutes: z.number().int().min(0).max(100000).optional(),
   isPreview: z.boolean().default(false),
   isMandatory: z.boolean().default(true),
-  completionRuleType: z.enum(LESSON_COMPLETION_RULE_TYPES).default('MANUAL'),
+  // No `.default('MANUAL')` here — 004 LMS-wide Settings batch (FR-114):
+  // `lesson.service.ts`'s `createCourseLesson` sources the fallback from
+  // `LmsSettings.defaultLessonCompletionRuleType` (admin-configurable)
+  // instead of a fixed value baked into the validator.
+  completionRuleType: z.enum(LESSON_COMPLETION_RULE_TYPES).optional(),
   /**
    * CORRECTION (Part 2 correction pass) — FR-052: "MUST allow a single
    * lesson to combine multiple required conditions." When supplied and
@@ -106,6 +110,25 @@ const safeUrl = z
     message: 'URL must use https:// or be an internal storage path',
   });
 
+/**
+ * 004 Captions + Transcript Support batch (FR-044/FR-046) — an ordered
+ * array of `{ startSeconds, text }` segments. This single structure backs
+ * search (client-side, over these segments), timestamp navigation
+ * (seek-to-`startSeconds`), and the downloadable transcript (segments'
+ * `text` joined at request time). Capped generously above any realistic
+ * lesson length/verbosity — same "bound everything caller-suppliable"
+ * discipline as `completionRuleValue`'s byte cap above.
+ */
+const transcriptSegmentsSchema = z
+  .array(
+    z.object({
+      startSeconds: z.number().min(0).max(24 * 3600),
+      text: z.string().trim().min(1).max(2000),
+    }),
+  )
+  .max(5000)
+  .optional();
+
 const activityBodyBase = z
   .object({
     type: z.enum(LEARNING_ACTIVITY_TYPES),
@@ -118,6 +141,11 @@ const activityBodyBase = z
     fileSizeBytes: z.number().int().min(0).max(10 * 1024 * 1024 * 1024).optional(),
     embedProvider: z.enum(EMBED_PROVIDERS).optional(),
     embedResourceId: z.string().trim().min(1).max(200).optional(),
+    // 004 Captions + Transcript Support batch (FR-044/FR-046) — VIDEO/AUDIO
+    // only enhancements, enforced below (not required by any type).
+    captionsUrlEn: safeUrl.optional(),
+    captionsUrlTa: safeUrl.optional(),
+    transcriptSegments: transcriptSegmentsSchema,
   })
   // Per-content-type required-field rules (Part 2C "per-content-type
   // security rules" — a VIDEO/AUDIO/DOWNLOAD/PDF activity must carry a
@@ -148,6 +176,15 @@ const activityBodyBase = z
         requireField(!!body.embedResourceId, 'embedResourceId', 'EMBED activities require embedResourceId');
         break;
     }
+
+    const hasCaptionsOrTranscript = !!body.captionsUrlEn || !!body.captionsUrlTa || !!body.transcriptSegments;
+    if (hasCaptionsOrTranscript && body.type !== 'VIDEO' && body.type !== 'AUDIO') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['captionsUrlEn'],
+        message: 'Captions and transcripts are only supported for VIDEO and AUDIO activities',
+      });
+    }
   });
 
 export const createActivitySchema = z.object({
@@ -174,6 +211,18 @@ export const updateActivitySchema = z.object({
       fileSizeBytes: z.number().int().min(0).max(10 * 1024 * 1024 * 1024).nullable().optional(),
       embedProvider: z.enum(EMBED_PROVIDERS).nullable().optional(),
       embedResourceId: z.string().trim().min(1).max(200).nullable().optional(),
+      captionsUrlEn: safeUrl.nullable().optional(),
+      captionsUrlTa: safeUrl.nullable().optional(),
+      transcriptSegments: z
+        .array(
+          z.object({
+            startSeconds: z.number().min(0).max(24 * 3600),
+            text: z.string().trim().min(1).max(2000),
+          }),
+        )
+        .max(5000)
+        .nullable()
+        .optional(),
       status: z.enum(['DRAFT', 'PUBLISHED', 'ARCHIVED']).optional(),
     })
     .refine((body) => Object.keys(body).length > 0, { message: 'Request body must not be empty' }),
@@ -187,3 +236,20 @@ export const reorderActivitiesSchema = z.object({
 export const activityIdParamSchema = z.object({ params: z.object({ activityId: uuid() }) });
 
 export const lessonActivitiesParamSchema = z.object({ params: z.object({ lessonId: uuid() }) });
+
+/**
+ * 004 PiP + Video Playback Telemetry batch (FR-040) — a bounded, periodic
+ * heartbeat body. `watchedDeltaSeconds` is capped tighter than
+ * `progress.validation.ts`'s generic `MAX_TIME_SPENT_DELTA_SECONDS` (3600)
+ * — this is meant to be reported far more frequently (every few seconds of
+ * real playback), so a single request claiming up to an hour would be a
+ * much larger red flag here than on the coarser whole-lesson endpoint.
+ */
+export const playbackProgressSchema = z.object({
+  params: z.object({ activityId: uuid() }),
+  body: z.object({
+    positionSeconds: z.number().min(0).max(24 * 3600),
+    watchedDeltaSeconds: z.number().min(0).max(60).optional(),
+    playbackSpeed: z.number().min(0.25).max(4).optional(),
+  }),
+});

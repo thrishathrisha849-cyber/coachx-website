@@ -185,6 +185,8 @@ type CourseRow = {
   archivedAt: Date | null;
   instructors: InstructorRow[];
   sequencingMode: string;
+  translationOfCourseId: string | null;
+  translationStatus: string | null;
 };
 
 export function toPublicCourse(row: CourseRow): PublicCourse {
@@ -290,5 +292,7 @@ export function toAdminCourse(row: CourseRow): AdminCourse {
     archivedAt: row.archivedAt,
     instructors: row.instructors.map(toPublicInstructor),
     sequencingMode: row.sequencingMode,
+    translationOfCourseId: row.translationOfCourseId,
+    translationStatus: row.translationStatus,
   };
 }

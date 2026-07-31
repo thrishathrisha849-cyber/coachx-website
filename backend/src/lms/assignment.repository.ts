@@ -17,6 +17,24 @@ export function findAssignmentByLessonId(lessonId: string, tx?: TransactionClien
   return db(tx).assignment.findFirst({ where: { lessonId, deletedAt: null } });
 }
 
+/** 004 Project-based Learning batch (FR-077) — the admin's "link an existing assignment as a project artifact" candidate list: every assignment in this module (across all its lessons) not already linked to a project. */
+export function findAssignmentsByModule(moduleId: string, tx?: TransactionClient) {
+  return db(tx).assignment.findMany({ where: { lesson: { moduleId }, deletedAt: null }, orderBy: { createdAt: 'asc' } });
+}
+
+/** 004 Project-based Learning batch (FR-077) — a project's linked artifacts, in authored order. */
+export function findArtifactsForProject(projectId: string, tx?: TransactionClient) {
+  return db(tx).assignment.findMany({ where: { projectId, deletedAt: null }, orderBy: { projectPosition: 'asc' } });
+}
+
+export function findPublishedArtifactsForProject(projectId: string, tx?: TransactionClient) {
+  return db(tx).assignment.findMany({ where: { projectId, status: 'PUBLISHED', deletedAt: null }, orderBy: { projectPosition: 'asc' } });
+}
+
+export function countArtifactsForProject(projectId: string, tx?: TransactionClient) {
+  return db(tx).assignment.count({ where: { projectId, deletedAt: null } });
+}
+
 export function createAssignment(data: Prisma.AssignmentCreateInput, tx?: TransactionClient) {
   return db(tx).assignment.create({ data });
 }
@@ -78,6 +96,16 @@ export function findSubmissionsForAssignmentAdmin(assignmentId: string, statusFi
     orderBy: { updatedAt: 'desc' },
     include: { criterionScores: true, enrollment: { include: { user: { include: { profile: true } } } } },
   });
+}
+
+// --- Assignment Feedback Interaction (004, FR-078, T067) --------------------
+
+export function createFeedbackMessage(data: Prisma.SubmissionFeedbackMessageCreateInput, tx?: TransactionClient) {
+  return db(tx).submissionFeedbackMessage.create({ data });
+}
+
+export function findFeedbackMessagesForSubmission(submissionId: string, tx?: TransactionClient) {
+  return db(tx).submissionFeedbackMessage.findMany({ where: { submissionId }, orderBy: { createdAt: 'asc' } });
 }
 
 export function upsertCriterionScore(

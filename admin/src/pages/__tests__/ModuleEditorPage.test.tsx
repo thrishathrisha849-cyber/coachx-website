@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ModuleEditorPage } from '../ModuleEditorPage';
 import * as lmsApi from '@/api/lms.api';
+import * as projectApi from '@/api/project.api';
 
 vi.mock('@/api/lms.api', async () => {
   const actual = await vi.importActual<typeof import('@/api/lms.api')>('@/api/lms.api');
@@ -16,6 +17,8 @@ vi.mock('@/api/lms.api', async () => {
     listModulesForCourse: vi.fn(),
   };
 });
+
+vi.mock('@/api/project.api');
 
 const module1 = {
   id: 'module-1',
@@ -53,6 +56,8 @@ describe('ModuleEditorPage — prerequisite picker (004 US6 polish batch, T086)'
     vi.mocked(lmsApi.updateModule).mockReset();
     vi.mocked(lmsApi.listLessonsForModule).mockReset().mockResolvedValue([]);
     vi.mocked(lmsApi.listModulesForCourse).mockReset();
+    vi.mocked(projectApi.listProjectsForModule).mockReset().mockResolvedValue([]);
+    vi.mocked(projectApi.createProject).mockReset();
   });
 
   it('only offers earlier-position sibling modules as a prerequisite', async () => {
@@ -81,5 +86,61 @@ describe('ModuleEditorPage — prerequisite picker (004 US6 polish batch, T086)'
     await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
     expect(lmsApi.updateModule).toHaveBeenCalledWith('module-2', expect.objectContaining({ prerequisiteModuleId: 'module-1' }));
+  });
+});
+
+describe('ModuleEditorPage — projects section (004 Project-based Learning batch, FR-077)', () => {
+  beforeEach(() => {
+    vi.mocked(lmsApi.getModuleAdminFull).mockReset().mockResolvedValue(module1);
+    vi.mocked(lmsApi.listLessonsForModule).mockReset().mockResolvedValue([]);
+    vi.mocked(lmsApi.listModulesForCourse).mockReset().mockResolvedValue([module1]);
+    vi.mocked(projectApi.listProjectsForModule).mockReset();
+    vi.mocked(projectApi.createProject).mockReset();
+  });
+
+  it('lists existing projects for the module', async () => {
+    vi.mocked(projectApi.listProjectsForModule).mockResolvedValue([
+      { id: 'project-1', moduleId: 'module-1', title: 'Capstone Project', description: null, status: 'DRAFT', version: 1, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+    ]);
+
+    render(
+      <MemoryRouter initialEntries={['/lms-modules/module-1']}>
+        <Routes>
+          <Route path="/lms-modules/:moduleId" element={<ModuleEditorPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('Capstone Project')).toBeInTheDocument();
+    expect(projectApi.listProjectsForModule).toHaveBeenCalledWith('module-1');
+  });
+
+  it('creates a new project', async () => {
+    vi.mocked(projectApi.listProjectsForModule).mockResolvedValue([]);
+    vi.mocked(projectApi.createProject).mockResolvedValue({
+      id: 'project-2',
+      moduleId: 'module-1',
+      title: 'New Project',
+      description: null,
+      status: 'DRAFT',
+      version: 1,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={['/lms-modules/module-1']}>
+        <Routes>
+          <Route path="/lms-modules/:moduleId" element={<ModuleEditorPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('No projects yet.');
+    await user.type(screen.getByPlaceholderText('Project title'), 'New Project');
+    await user.click(screen.getByRole('button', { name: '+ Add project' }));
+
+    expect(projectApi.createProject).toHaveBeenCalledWith('module-1', { title: 'New Project', description: undefined });
   });
 });

@@ -6,13 +6,23 @@ import {
   changeAssignmentStatus,
   createCriterion,
   archiveCriterion,
+  ASSESSMENT_TYPES,
   type AdminAssignmentWithRubric,
   type AdminRubricCriterion,
+  type AssessmentType,
 } from '@/api/assignment.api';
 import type { NormalizedApiError } from '@/api/client';
 
 const SUBMISSION_FORMATS = ['TEXT', 'LINK', 'FILE_URL', 'IMAGE_URL', 'AUDIO_URL', 'VIDEO_URL'];
 const LATE_POLICIES = ['ACCEPT', 'REJECT'];
+/** 004 Broader Assessment Types batch (FR-068) — labels for the admin's assessment-type select. */
+const ASSESSMENT_TYPE_LABELS: Record<AssessmentType, string> = {
+  STANDARD: 'Standard (instructor-reviewed)',
+  SELF_ASSESSMENT: 'Self-assessment (learner-scored)',
+  SKILL_RATING: 'Skill rating (learner-scored)',
+  SCENARIO_TASK: 'Scenario task (instructor-reviewed)',
+  PORTFOLIO_REVIEW: 'Portfolio review (instructor-reviewed)',
+};
 const VALID_TRANSITIONS: Record<string, string[]> = { DRAFT: ['PUBLISHED', 'ARCHIVED'], PUBLISHED: ['ARCHIVED', 'DRAFT'], ARCHIVED: ['DRAFT'] };
 
 /** 004 US4 Assignment System batch — create-assignment form (when no assignmentId yet) and the settings + rubric editor once one exists. */
@@ -33,6 +43,7 @@ function CreateAssignmentForm({ lessonId, onCreated }: { lessonId: string; onCre
   const [maxScore, setMaxScore] = useState(100);
   const [passingScore, setPassingScore] = useState(70);
   const [latePolicy, setLatePolicy] = useState('ACCEPT');
+  const [assessmentType, setAssessmentType] = useState<AssessmentType>('STANDARD');
   const [dueAt, setDueAt] = useState('');
   const [peerReviewEnabled, setPeerReviewEnabled] = useState(false);
   const [peerReviewsRequired, setPeerReviewsRequired] = useState(2);
@@ -54,6 +65,7 @@ function CreateAssignmentForm({ lessonId, onCreated }: { lessonId: string; onCre
         passingScore,
         latePolicy,
         maxAttempts: null,
+        assessmentType,
         peerReviewEnabled,
         peerReviewsRequired: peerReviewEnabled ? peerReviewsRequired : 0,
         peerReviewAnonymous,
@@ -84,6 +96,23 @@ function CreateAssignmentForm({ lessonId, onCreated }: { lessonId: string; onCre
           <select value={submissionFormat} onChange={(e) => setSubmissionFormat(e.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-900">
             {SUBMISSION_FORMATS.map((f) => <option key={f} value={f}>{f}</option>)}
           </select>
+        </label>
+        <label className="text-sm">
+          Assessment type (FR-068)
+          <select
+            value={assessmentType}
+            onChange={(e) => setAssessmentType(e.target.value as AssessmentType)}
+            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-900"
+          >
+            {ASSESSMENT_TYPES.map((t) => (
+              <option key={t} value={t}>{ASSESSMENT_TYPE_LABELS[t]}</option>
+            ))}
+          </select>
+          {(assessmentType === 'SELF_ASSESSMENT' || assessmentType === 'SKILL_RATING') && (
+            <p className="mt-1 text-xs text-slate-400">
+              The learner scores their own submission against the rubric below — no instructor review step.
+            </p>
+          )}
         </label>
         <div className="flex gap-3">
           <label className="flex-1 text-sm">
@@ -183,6 +212,7 @@ function AssignmentManager({ assignmentId }: { assignmentId: string }) {
         {assignment.submissionFormat} · Max {assignment.maxScore} pts, passing {assignment.passingScore} · Late policy: {assignment.latePolicy}
         {assignment.dueAt && ` · Due ${new Date(assignment.dueAt).toLocaleString()}`}
       </p>
+      <p className="mt-1 text-xs font-medium text-brand-600 dark:text-brand-400">{ASSESSMENT_TYPE_LABELS[assignment.assessmentType]}</p>
       <p className="mt-1 text-xs text-slate-400">
         {assignment.peerReviewEnabled
           ? `Peer review: ${assignment.peerReviewsRequired} required, ${assignment.peerReviewAnonymous ? 'anonymous' : 'identity visible'}${assignment.peerReviewIncludeInGrade ? ', informs grade' : ''}`

@@ -6,7 +6,11 @@ import { selfEnroll, listMyEnrollments } from './enrollment.service';
 import { evaluateCourseAccess, evaluateLessonAccess } from './access-evaluator.service';
 import { getCourseProgressForLearner, updateLessonProgress } from './progress.service';
 import { completeLessonManually, maybeAutoCompleteFromProgress, recordActivityViewed } from './completion.service';
+import { getMyActivityTranscriptDownload } from './activity.service';
+import { recordPlaybackStarted, recordPlaybackProgress, getMyPlaybackTelemetry } from './video-playback-telemetry.service';
 import { getContinueLearning } from './continue-learning.service';
+import { getMyStreak } from './learning-streak.service';
+import { getVersionMigrationStatusForLearner, migrateMyProgressToLatestVersion } from './course-version.service';
 import { getCourseCurriculumForLearner } from './curriculum.service';
 import { findLessonById } from './lesson.repository';
 import { findModuleById } from './module.repository';
@@ -51,6 +55,26 @@ export const getMyCourseProgress = asyncHandler(async (req: Request, res: Respon
 
 export const getMyContinueLearning = asyncHandler(async (req: Request, res: Response) => {
   const result = await getContinueLearning(req.user!.id, req.params.courseId);
+  res.status(200).json(buildSuccessResponse(result));
+});
+
+/** GET /me/streak — FR-057 Learning Streak (T042). Server-computed, never a client-settable value. */
+export const getMyLearningStreak = asyncHandler(async (req: Request, res: Response) => {
+  const streak = await getMyStreak(req.user!.id);
+  res.status(200).json(buildSuccessResponse(streak));
+});
+
+// --- Course Versioning Policy (004, FR-099) ---------------------------------
+
+/** GET /me/enrollments/:id/version-status — is a new version available, and under which policy. */
+export const getMyVersionMigrationStatus = asyncHandler(async (req: Request, res: Response) => {
+  const status = await getVersionMigrationStatusForLearner(req.user!.id, req.params.id);
+  res.status(200).json(buildSuccessResponse(status));
+});
+
+/** POST /me/enrollments/:id/migrate-version — voluntary self-service migration (FR-099 "optional migration"; also usable to migrate early under a mandatory policy). */
+export const postMigrateMyVersion = asyncHandler(async (req: Request, res: Response) => {
+  const result = await migrateMyProgressToLatestVersion(req.user!.id, req.params.id);
   res.status(200).json(buildSuccessResponse(result));
 });
 
@@ -119,6 +143,35 @@ export const postMyLessonComplete = asyncHandler(async (req: Request, res: Respo
 export const postMyActivityViewed = asyncHandler(async (req: Request, res: Response) => {
   await recordActivityViewed(req.user!.id, req.params.activityId);
   res.status(200).json(buildSuccessResponse({ viewed: true }));
+});
+
+// 004 Captions + Transcript Support batch (FR-044/FR-046) — plain-text
+// download, generated at request time from `transcriptSegments`.
+export const getMyActivityTranscript = asyncHandler(async (req: Request, res: Response) => {
+  const { filename, content } = await getMyActivityTranscriptDownload(req.user!.id, req.params.activityId);
+  res.status(200);
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(content);
+});
+
+// 004 PiP + Video Playback Telemetry batch (FR-040) — `User-Agent` is
+// captured server-side from the request header (never a client-supplied
+// device field), same convention `auth.controller.ts` already uses for
+// `Session.userAgent`.
+export const postMyActivityPlaybackStarted = asyncHandler(async (req: Request, res: Response) => {
+  const result = await recordPlaybackStarted(req.user!.id, req.params.activityId, (req.headers['user-agent'] as string | undefined) ?? null);
+  res.status(200).json(buildSuccessResponse(result));
+});
+
+export const postMyActivityPlaybackProgress = asyncHandler(async (req: Request, res: Response) => {
+  const result = await recordPlaybackProgress(req.user!.id, req.params.activityId, req.body);
+  res.status(200).json(buildSuccessResponse(result));
+});
+
+export const getMyActivityPlayback = asyncHandler(async (req: Request, res: Response) => {
+  const result = await getMyPlaybackTelemetry(req.user!.id, req.params.activityId);
+  res.status(200).json(buildSuccessResponse(result));
 });
 
 // --- Certificates (004 US5 Certificate System batch) -----------------------

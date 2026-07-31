@@ -20,6 +20,8 @@ vi.mock('@/api/lms.api', async () => {
     changeCourseStatus: vi.fn(),
     updateCourse: vi.fn(),
     cloneCourse: vi.fn(),
+    getTranslationVariantsAdmin: vi.fn(),
+    setTranslationStatusAdmin: vi.fn(),
   };
 });
 
@@ -63,6 +65,8 @@ const course = {
   publishedAt: null,
   updatedAt: '2026-01-01T00:00:00.000Z',
   sequencingMode: 'FLEXIBLE',
+  translationOfCourseId: null,
+  translationStatus: null,
 };
 
 function renderPage() {
@@ -84,6 +88,7 @@ describe('CourseEditorPage (LMS Admin UI batch)', () => {
     vi.mocked(lmsApi.changeCourseStatus).mockReset();
     vi.mocked(lmsApi.updateCourse).mockReset();
     vi.mocked(lmsApi.cloneCourse).mockReset();
+    vi.mocked(lmsApi.getTranslationVariantsAdmin).mockReset().mockResolvedValue([]);
   });
 
   it('renders the course and only offers the valid DRAFT->SUBMITTED_FOR_REVIEW transition', async () => {
@@ -138,6 +143,24 @@ describe('CourseEditorPage (LMS Admin UI batch)', () => {
     expect(lmsApi.updateCourse).toHaveBeenCalledWith('course-1', expect.objectContaining({ sequencingMode: 'SEQUENTIAL' }));
   });
 
+  it('sends the version-policy fields (changeSummary, existingLearnerPolicy) when saving (004 Course Versioning Policy batch, FR-099)', async () => {
+    vi.mocked(lmsApi.getCourseAdminFull).mockResolvedValue(course);
+    vi.mocked(lmsApi.updateCourse).mockResolvedValue(course);
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText('Intro to Business');
+    await user.type(screen.getByLabelText('Change summary'), 'Reworded the intro.');
+    await user.selectOptions(screen.getByLabelText('Existing-learner policy'), 'OPTIONAL_MIGRATION');
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    expect(lmsApi.updateCourse).toHaveBeenCalledWith(
+      'course-1',
+      expect.objectContaining({ versionChangeSummary: 'Reworded the intro.', versionExistingLearnerPolicy: 'OPTIONAL_MIGRATION' }),
+    );
+  });
+
   it('clones the course with the selected mode and slug (004 US8)', async () => {
     vi.mocked(lmsApi.getCourseAdminFull).mockResolvedValue(course);
     vi.mocked(lmsApi.cloneCourse).mockResolvedValue({ ...course, id: 'course-2', slug: 'intro-clone' });
@@ -153,8 +176,9 @@ describe('CourseEditorPage (LMS Admin UI batch)', () => {
     expect(lmsApi.cloneCourse).toHaveBeenCalledWith('course-1', { mode: 'CURRICULUM_ONLY', slug: 'intro-clone', title: undefined, language: undefined });
   });
 
-  it('disables the clone button when ASSESSMENT_BANK is selected (not yet supported)', async () => {
+  it('clones only the question bank when ASSESSMENT_BANK is selected (004 Question Bank batch, T107/FR-098#3)', async () => {
     vi.mocked(lmsApi.getCourseAdminFull).mockResolvedValue(course);
+    vi.mocked(lmsApi.cloneCourse).mockResolvedValue({ ...course, id: 'course-3', slug: 'intro-bank' });
 
     const user = userEvent.setup();
     renderPage();
@@ -163,7 +187,38 @@ describe('CourseEditorPage (LMS Admin UI batch)', () => {
     await user.selectOptions(screen.getByLabelText('Mode'), 'ASSESSMENT_BANK');
     await user.type(screen.getByLabelText('New slug'), 'intro-bank');
 
-    expect(screen.getByRole('button', { name: 'Clone course' })).toBeDisabled();
-    expect(screen.getByText(/Not yet supported/)).toBeInTheDocument();
+    expect(screen.getByText(/Copies only this course's question bank items/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clone course' })).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: 'Clone course' }));
+
+    expect(lmsApi.cloneCourse).toHaveBeenCalledWith('course-1', { mode: 'ASSESSMENT_BANK', slug: 'intro-bank', title: undefined, language: undefined });
+  });
+
+  it('shows translation status + transition buttons for a course that is itself a translation variant (004 Course Translation batch, FR-101)', async () => {
+    const variantCourse = { ...course, translationOfCourseId: 'course-source', translationStatus: 'IN_PROGRESS' };
+    vi.mocked(lmsApi.getCourseAdminFull).mockResolvedValue(variantCourse);
+    vi.mocked(lmsApi.setTranslationStatusAdmin).mockResolvedValue({ ...variantCourse, translationStatus: 'REVIEW' });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText('Intro to Business');
+    expect(screen.getByText('IN_PROGRESS')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Move to REVIEW' }));
+
+    expect(lmsApi.setTranslationStatusAdmin).toHaveBeenCalledWith('course-1', 'REVIEW');
+  });
+
+  it('lists translation variants of the current course, flagging an OUTDATED one', async () => {
+    vi.mocked(lmsApi.getCourseAdminFull).mockResolvedValue(course);
+    vi.mocked(lmsApi.getTranslationVariantsAdmin).mockResolvedValue([
+      { ...course, id: 'course-ta', title: 'Intro to Business (Tamil)', language: 'TA', translationOfCourseId: 'course-1', translationStatus: 'OUTDATED' },
+    ]);
+
+    renderPage();
+
+    expect(await screen.findByText('Intro to Business (Tamil)')).toBeInTheDocument();
+    expect(screen.getByText('OUTDATED')).toBeInTheDocument();
   });
 });

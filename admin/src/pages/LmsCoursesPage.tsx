@@ -74,9 +74,14 @@ export function LmsCoursesPage() {
           <h1 className="text-lg font-semibold text-slate-900 dark:text-white">Courses</h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Course builder — create, edit, and publish courses.</p>
         </div>
-        <button onClick={() => setShowCreate((v) => !v)} className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700">
-          + New course
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => navigate('/lms-courses/new-wizard')} className="rounded-md border border-brand-600 px-3 py-1.5 text-sm font-medium text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-950">
+            + New course (wizard)
+          </button>
+          <button onClick={() => setShowCreate((v) => !v)} className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700">
+            + New course (quick)
+          </button>
+        </div>
       </div>
 
       {showCreate && (

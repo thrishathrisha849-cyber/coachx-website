@@ -88,6 +88,15 @@ export function countSeatOccupyingEnrollments(courseId: string, tx?: Transaction
   });
 }
 
+/** Same seat-occupying status set as `countSeatOccupyingEnrollments` — every learner with a real, current seat in the course (004 Course Announcements batch, FR-102's EMAIL channel). */
+export async function findSeatOccupyingEnrollmentEmails(courseId: string, tx?: TransactionClient): Promise<string[]> {
+  const rows = await db(tx).enrollment.findMany({
+    where: { courseId, status: { in: ['PENDING', 'ACTIVE', 'SUSPENDED', 'COMPLETED'] } },
+    include: { user: { select: { email: true } } },
+  });
+  return [...new Set(rows.map((r) => r.user.email))];
+}
+
 export function createEnrollment(data: Prisma.EnrollmentCreateInput, tx?: TransactionClient) {
   return db(tx).enrollment.create({ data, include: enrollmentInclude });
 }

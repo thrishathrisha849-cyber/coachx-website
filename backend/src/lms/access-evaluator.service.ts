@@ -1,3 +1,5 @@
+import { AppError } from '../utils/app-error';
+import { HttpStatus, ERROR_CODES } from '@coachx/shared';
 import { findCourseById } from './course.repository';
 import { isCourseVisibleByDirectLink } from './course-lifecycle.policy';
 import { findModuleById, findModulesByCourse } from './module.repository';
@@ -5,7 +7,24 @@ import { findLessonById, findLessonsByModule } from './lesson.repository';
 import { findEnrollmentForUserAndCourse } from './enrollment.repository';
 import { isEnrollmentAccessWindowOpen } from './enrollment.policy';
 import { findLessonProgressForLessons } from './progress.repository';
+import { findCohortModuleScheduleForEnrollment } from './cohort.repository';
 import { ALLOWED, denied, type AccessDecision } from './access.types';
+
+/**
+ * Optional pre-fetched `course`/`enrollment` rows, accepted by
+ * `evaluateCourseAccess`/`evaluateModuleAccess` so a caller that already
+ * has one or both loaded (e.g. `continue-learning.service.ts` evaluating
+ * every module of the SAME course/enrollment in a loop) can skip the
+ * otherwise-repeated queries. A key's PRESENCE (not its value) signals
+ * "don't re-fetch this" — `{ course: null }` means "I already checked,
+ * there is none," distinct from omitting the key entirely, which still
+ * fetches as before. Every existing call site that doesn't pass this
+ * parameter is byte-for-byte unaffected.
+ */
+export interface AccessPrefetch {
+  course?: Awaited<ReturnType<typeof findCourseById>>;
+  enrollment?: Awaited<ReturnType<typeof findEnrollmentForUserAndCourse>>;
+}
 
 /**
  * Phase 6 Part 2B/2C — the ONE centralized access-decision pipeline.
@@ -40,15 +59,15 @@ import { ALLOWED, denied, type AccessDecision } from './access.types';
  *      "must still deny based on timestamps" requirement).
  *  Otherwise → ALLOWED.
  */
-export async function evaluateCourseAccess(userId: string | null, courseId: string): Promise<AccessDecision> {
+export async function evaluateCourseAccess(userId: string | null, courseId: string, prefetch?: AccessPrefetch): Promise<AccessDecision> {
   if (!userId) return denied('AUTHENTICATION_REQUIRED', 'Sign in to access this course');
 
-  const course = await findCourseById(courseId);
+  const course = prefetch && 'course' in prefetch ? prefetch.course : await findCourseById(courseId);
   if (!course) return denied('COURSE_UNAVAILABLE', 'Course not found');
 
   if (course.status === 'RETIRED') return denied('COURSE_RETIRED', 'This course has been retired');
 
-  const enrollment = await findEnrollmentForUserAndCourse(userId, courseId);
+  const enrollment = prefetch && 'enrollment' in prefetch ? prefetch.enrollment : await findEnrollmentForUserAndCourse(userId, courseId);
 
   if (course.status === 'ARCHIVED') {
     if (!enrollment) return denied('COURSE_ARCHIVED', 'This course is archived and no longer accepting new access');
@@ -102,7 +121,7 @@ async function isModulePrerequisiteSatisfied(enrollmentId: string, module: { pre
  */
 async function isModuleReleased(
   enrollment: { enrolledAt: Date },
-  module: { releaseRuleType: string; releaseRuleValue: unknown; prerequisiteModuleId: string | null; manuallyReleasedAt: Date | null },
+  module: { id: string; releaseRuleType: string; releaseRuleValue: unknown; prerequisiteModuleId: string | null; manuallyReleasedAt: Date | null },
   enrollmentId: string,
 ): Promise<{ released: boolean; unlockAt?: Date }> {
   const now = new Date();
@@ -130,13 +149,26 @@ async function isModuleReleased(
     case 'INSTRUCTOR_RELEASE':
       return { released: module.manuallyReleasedAt !== null && module.manuallyReleasedAt <= now, unlockAt: module.manuallyReleasedAt ?? undefined };
 
+    case 'COHORT_SCHEDULE': {
+      // 004 Cohort entity batch (T085, FR-034) — the unlock date lives on
+      // the learner's OWN cohort's `CohortModuleSchedule` row, not on the
+      // module itself (every cohort attached to this course can schedule
+      // the same module differently). No cohort membership, or a cohort
+      // that hasn't scheduled this module yet, fails OPEN — the same
+      // "misconfigured/unset never permanently locks content" precedent
+      // `FIXED_DATE` above already established.
+      const schedule = await findCohortModuleScheduleForEnrollment(enrollmentId, module.id);
+      if (!schedule) return { released: true };
+      return { released: schedule.unlockAt <= now, unlockAt: schedule.unlockAt };
+    }
+
     default:
       return { released: true };
   }
 }
 
-export async function evaluateModuleAccess(userId: string | null, courseId: string, moduleId: string): Promise<AccessDecision> {
-  const courseAccess = await evaluateCourseAccess(userId, courseId);
+export async function evaluateModuleAccess(userId: string | null, courseId: string, moduleId: string, prefetch?: AccessPrefetch): Promise<AccessDecision> {
+  const courseAccess = await evaluateCourseAccess(userId, courseId, prefetch);
   if (!courseAccess.allowed) return courseAccess;
 
   const module_ = await findModuleById(moduleId);
@@ -144,7 +176,11 @@ export async function evaluateModuleAccess(userId: string | null, courseId: stri
     return denied('MODULE_LOCKED', 'This module is not available');
   }
 
-  const enrollment = await findEnrollmentForUserAndCourse(userId!, courseId);
+  // `evaluateCourseAccess` above already resolved (and, when `prefetch`
+  // was supplied, reused) the enrollment as part of confirming access is
+  // ALLOWED — re-deriving it here via a second `findEnrollmentForUserAndCourse`
+  // call was pure waste on every single call, prefetched or not.
+  const enrollment = prefetch && 'enrollment' in prefetch ? prefetch.enrollment : await findEnrollmentForUserAndCourse(userId!, courseId);
   if (!enrollment) return denied('ENROLLMENT_REQUIRED', 'Enroll in this course to access it');
 
   const prerequisiteMet = await isModulePrerequisiteSatisfied(enrollment.id, module_);
@@ -203,6 +239,35 @@ export async function evaluateLessonAccess(userId: string | null, courseId: stri
   }
 
   return ALLOWED;
+}
+
+/**
+ * 004 Error-code taxonomy batch (FR-125) — the ONE shared "throw on denial"
+ * wrapper around `evaluateLessonAccess`, consolidating what used to be
+ * near-duplicate private helpers in `bookmark.service.ts`,
+ * `learner-note.service.ts`, and `lesson-resource.service.ts`. One of those
+ * duplicates (`lesson-resource.service.ts`'s `assertLessonAccessibleForResources`)
+ * had drifted to `throw AppError.forbidden(access.message)`, silently
+ * dropping `reason`/`detail` and defeating FR-125's own purpose for
+ * resource-access denials. Centralizing here (the module that already owns
+ * `evaluateLessonAccess`) prevents that class of drift from recurring.
+ */
+export async function assertLessonContentAccessible(
+  userId: string | null,
+  lessonId: string,
+): Promise<{ courseId: string; viaPreview: boolean }> {
+  const lesson = await findLessonById(lessonId);
+  if (!lesson || lesson.status !== 'PUBLISHED') throw AppError.notFound('Lesson not found');
+
+  const module_ = await findModuleById(lesson.moduleId);
+  if (!module_) throw AppError.notFound('Lesson not found');
+
+  const access = await evaluateLessonAccess(userId, module_.courseId, lesson.id);
+  if (!access.allowed) {
+    throw new AppError(access.message, HttpStatus.FORBIDDEN, ERROR_CODES.FORBIDDEN, { reason: access.reason, ...access.detail });
+  }
+
+  return { courseId: module_.courseId, viaPreview: !!access.viaPreview };
 }
 
 /** Exported for reuse by completion.service.ts (module-completion evaluation needs the same prerequisite check the access evaluator uses). */

@@ -145,4 +145,7 @@ export interface AdminCourse extends Omit<PublicCourse, 'category' | 'instructor
   instructors: PublicCourseInstructor[];
   /** 004 US6 polish batch (FR-034) — see schema.prisma's Course.sequencingMode doc comment. Admin-only; not exposed on PublicCourse. */
   sequencingMode: string;
+  /** 004 Course Translation Management batch (FR-101) — null on every ordinary, non-variant course. */
+  translationOfCourseId: string | null;
+  translationStatus: string | null;
 }

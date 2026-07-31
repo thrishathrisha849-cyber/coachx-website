@@ -13,9 +13,10 @@ import {
   type AdminCourseModuleFull,
   type AdminLessonFull,
 } from '@/api/lms.api';
+import { createProject, listProjectsForModule, type AdminProject } from '@/api/project.api';
 import type { NormalizedApiError } from '@/api/client';
 
-const RELEASE_RULE_TYPES = ['IMMEDIATE', 'DAYS_AFTER_ENROLLMENT', 'FIXED_DATE', 'AFTER_PREVIOUS_MODULE', 'INSTRUCTOR_RELEASE'];
+const RELEASE_RULE_TYPES = ['IMMEDIATE', 'DAYS_AFTER_ENROLLMENT', 'FIXED_DATE', 'AFTER_PREVIOUS_MODULE', 'INSTRUCTOR_RELEASE', 'COHORT_SCHEDULE'];
 
 /** LMS Admin UI batch — module metadata + drip/release config + its lessons (T088-T103). */
 export function ModuleEditorPage() {
@@ -140,17 +141,82 @@ export function ModuleEditorPage() {
             <button onClick={handlePublish} className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:border-brand-400 dark:border-slate-700 dark:text-slate-200">
               {module_.status === 'PUBLISHED' ? 'Unpublish (move to Draft)' : 'Publish'}
             </button>
-            {module_.releaseRuleType !== 'IMMEDIATE' && (
+            {module_.releaseRuleType !== 'IMMEDIATE' && module_.releaseRuleType !== 'COHORT_SCHEDULE' && (
               <button onClick={handleReleaseNow} className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:border-brand-400 dark:border-slate-700 dark:text-slate-200">
                 Release now
               </button>
+            )}
+            {module_.releaseRuleType === 'COHORT_SCHEDULE' && (
+              <p className="self-center text-xs text-slate-400">Set each cohort's unlock date from the course's Cohorts page.</p>
             )}
           </div>
         </div>
       </section>
 
       <LessonsSection moduleId={moduleId} onError={setError} />
+      <ProjectsSection moduleId={moduleId} onError={setError} />
     </div>
+  );
+}
+
+/** 004 Project-based Learning batch (FR-077) — this module's final project(s). Artifact linking/status-management happens on the dedicated `ProjectEditorPage.tsx`, reached via "Manage". */
+function ProjectsSection({ moduleId, onError }: { moduleId: string; onError: (e: string | null) => void }) {
+  const navigate = useNavigate();
+  const [projects, setProjects] = useState<AdminProject[]>([]);
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [creating, setCreating] = useState(false);
+
+  function load() {
+    listProjectsForModule(moduleId)
+      .then(setProjects)
+      .catch(() => undefined);
+  }
+
+  useEffect(load, [moduleId]);
+
+  async function handleCreate() {
+    if (!title.trim()) return;
+    setCreating(true);
+    onError(null);
+    try {
+      await createProject(moduleId, { title: title.trim(), description: description.trim() || undefined });
+      setTitle('');
+      setDescription('');
+      load();
+    } catch (err) {
+      onError((err as NormalizedApiError).message ?? 'Could not create project.');
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  return (
+    <section className="mt-6 rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Projects (FR-077)</h2>
+      <p className="mt-1 text-xs text-slate-400">A project combines multiple required-artifact assignments; a PUBLISHED project's artifacts must all be approved before this module can be completed.</p>
+      <ul className="mt-3 flex flex-col gap-2">
+        {projects.map((p) => (
+          <li key={p.id} className="flex items-center justify-between rounded-md border border-slate-200 p-3 text-sm dark:border-slate-800">
+            <span className="font-medium text-slate-800 dark:text-slate-100">{p.title}</span>
+            <div className="flex items-center gap-2 text-xs">
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600 dark:bg-slate-800 dark:text-slate-300">{p.status}</span>
+              <button onClick={() => navigate(`/projects/${p.id}`)} className="text-brand-600 hover:text-brand-700 dark:text-brand-400">
+                Manage
+              </button>
+            </div>
+          </li>
+        ))}
+        {projects.length === 0 && <p className="text-sm text-slate-400">No projects yet.</p>}
+      </ul>
+      <div className="mt-4 flex items-end gap-2">
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Project title" className="w-56 rounded-md border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-900" />
+        <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description (optional)" className="w-64 rounded-md border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-900" />
+        <button onClick={handleCreate} disabled={creating || !title.trim()} className="rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-60">
+          + Add project
+        </button>
+      </div>
+    </section>
   );
 }
 

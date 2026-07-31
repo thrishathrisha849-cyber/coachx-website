@@ -91,6 +91,18 @@ export function CourseAnalyticsPage() {
       </dl>
       <p className="mt-2 text-xs italic text-slate-400">Not tracked in this build: {analytics.notApplicable.join(', ')}.</p>
 
+      <h2 className="mt-8 font-semibold text-slate-900 dark:text-white">Device distribution</h2>
+      <p className="mt-1 text-xs text-slate-400">Bucketed from playback User-Agent data (004 PiP + Video Playback Telemetry batch, FR-040).</p>
+      {!analytics.deviceDistribution ? (
+        <p className="mt-2 text-sm text-slate-400">No video playback telemetry recorded yet.</p>
+      ) : (
+        <dl className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {Object.entries(analytics.deviceDistribution).map(([device, count]) => (
+            <Kpi key={device} label={device} value={count} />
+          ))}
+        </dl>
+      )}
+
       <h2 className="mt-8 font-semibold text-slate-900 dark:text-white">Lesson drop-off</h2>
       {analytics.lessonDropOff.length === 0 && <p className="mt-2 text-sm text-slate-400">No significant drop-off detected.</p>}
       {analytics.lessonDropOff.length > 0 && (

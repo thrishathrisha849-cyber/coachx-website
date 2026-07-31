@@ -1,4 +1,5 @@
 import { AppError } from '../utils/app-error';
+import type { LmsBusinessRuleCode } from './lms-error-codes';
 import { withTransaction } from '../database/transaction';
 import { recordAuditEvent } from '../database/audit-event.repository';
 import { beginIdempotentOperation } from '../database/idempotency.service';
@@ -9,6 +10,7 @@ import { evaluateLessonAccess } from './access-evaluator.service';
 import { findEnrollmentForUserAndCourse, findEnrollmentById } from './enrollment.repository';
 import { maybeAutoCompleteFromQuizPass } from './completion.service';
 import { recordLearningEvent } from './learning-event.service';
+import { recordQuizCompletionForStreak } from './learning-streak.service';
 import {
   findQuizById,
   findPublishedQuestionsByQuiz,
@@ -95,10 +97,13 @@ export async function startOrResumeAttempt(userId: string, quizId: string): Prom
 
   const finalizedCount = (await findAttemptsForEnrollmentQuiz(enrollmentId, quizId)).filter((a) => a.status !== 'IN_PROGRESS').length;
   if (quiz!.maxAttempts !== null && finalizedCount >= quiz!.maxAttempts) {
+    // 004 Error-code taxonomy batch (FR-125) — `QUIZ_ATTEMPT_LIMIT_REACHED`
+    // is a member of the business-rule-rejection family (`lms-error-codes.ts`).
+    const code: LmsBusinessRuleCode = 'QUIZ_ATTEMPT_LIMIT_REACHED';
     throw new AppError(
       'You have used all of your allowed attempts for this quiz',
       409 as never,
-      'QUIZ_ATTEMPT_LIMIT_REACHED',
+      code,
       { maxAttempts: quiz!.maxAttempts, attemptsUsed: finalizedCount },
     );
   }
@@ -356,6 +361,15 @@ async function gradeAndFinalizeAttempt(attemptId: string, actorId: string): Prom
         },
         tx,
       );
+
+      // FR-057 Learning Streak — "quiz complete" qualifying action. Only a
+      // genuine PASS counts (matching the same bar `maybeAutoCompleteFromQuizPass`
+      // already uses for lesson completion) — quizzes have no admin
+      // "override the result" path, so every attempt reaching this line is
+      // inherently genuine learner activity.
+      if (passed) {
+        await recordQuizCompletionForStreak(owningEnrollment.userId, tx);
+      }
     }
 
     return toAttemptResult(updated);

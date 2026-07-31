@@ -197,13 +197,25 @@ describe('lms.validation — createModuleSchema (004 FR-016/FR-034/FR-052 fields
     }
   });
 
-  it('rejects an unsupported releaseRuleType (a value not in FR-034s Cohort-free subset)', () => {
+  it('rejects an unsupported releaseRuleType', () => {
+    const result = createModuleSchema.safeParse({
+      body: { title: 'Module 1', releaseRuleType: 'NOT_A_REAL_RULE_TYPE' },
+      params: { courseId },
+      query: {},
+    });
+    expect(result.success).toBe(false);
+  });
+
+  // 004 Cohort entity batch (T085) — COHORT_SCHEDULE is now a real,
+  // supported release-rule type (previously rejected here before the
+  // Cohort entity existed).
+  it('accepts releaseRuleType COHORT_SCHEDULE now that the Cohort entity exists', () => {
     const result = createModuleSchema.safeParse({
       body: { title: 'Module 1', releaseRuleType: 'COHORT_SCHEDULE' },
       params: { courseId },
       query: {},
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it('accepts an explicit prerequisiteModuleId', () => {

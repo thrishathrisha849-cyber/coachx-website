@@ -1,11 +1,11 @@
 /**
  * Real-database integration tests for 004-learning-management-system's
  * US8 Course Cloning batch: FR-098's clone modes (FULL, CURRICULUM_ONLY,
- * CONTENT_WITHOUT_ENROLLMENTS, CERTIFICATE_SETTINGS, TRANSLATION_VARIANT),
- * SC-008's "0% carry-over of enrollments/progress/financial data"
- * guarantee, module-prerequisite remapping onto the new module ids, and
- * the explicit ASSESSMENT_BANK rejection. Same graceful-skip pattern as
- * the other integration suites — see docs/database/TESTING.md.
+ * CONTENT_WITHOUT_ENROLLMENTS, ASSESSMENT_BANK, CERTIFICATE_SETTINGS,
+ * TRANSLATION_VARIANT), SC-008's "0% carry-over of enrollments/progress/
+ * financial data" guarantee, and module-prerequisite remapping onto the
+ * new module ids. Same graceful-skip pattern as the other integration
+ * suites — see docs/database/TESTING.md.
  */
 
 process.env.DATABASE_URL = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
@@ -225,6 +225,8 @@ beforeEach(() => {
 afterAll(async () => {
   if (dbAvailable) {
     const db = getPrismaClient();
+    await db.questionBankItemOption.deleteMany({});
+    await db.questionBankItem.deleteMany({});
     await db.submissionCriterionScore.deleteMany({});
     await db.submission.deleteMany({});
     await db.rubricCriterion.deleteMany({});
@@ -402,17 +404,58 @@ describe('Course Cloning (US8, FR-098/SC-008)', () => {
     expect(row.translationOfCourseId).toBe(courseId);
   });
 
-  it('rejects ASSESSMENT_BANK mode with a clear explanation', async () => {
+  it('ASSESSMENT_BANK copies only QuestionBankItem rows into a new course with no curriculum/lessons/certificate settings (T107, FR-098#3)', async () => {
     if (skip()) return;
     await ensureAdminAndCategory();
     const { courseId } = await createRichSourceCourse();
+
+    const item1 = await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/question-bank`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({
+        type: 'SINGLE_CHOICE',
+        prompt: 'Bank question 1',
+        category: 'basics',
+        difficulty: 'EASY',
+        reviewStatus: 'APPROVED',
+        status: 'PUBLISHED',
+        options: [{ text: 'A', isCorrect: true }, { text: 'B', isCorrect: false }],
+      });
+    expect(item1.status).toBe(201);
+    const item2 = await request(app)
+      .post(`/api/v1/lms/admin/courses/${courseId}/question-bank`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ type: 'TRUE_FALSE', prompt: 'Bank question 2', reviewStatus: 'DRAFT' });
+    expect(item2.status).toBe(201);
 
     const cloneRes = await request(app)
       .post(`/api/v1/lms/admin/courses/${courseId}/clone`)
       .set('Authorization', `Bearer ${admin.accessToken}`)
       .send({ mode: 'ASSESSMENT_BANK', slug: uniqueSlug('clone-bank') });
-    expect(cloneRes.status).toBe(400);
-    expect(cloneRes.body.error.message).toMatch(/not yet supported/i);
+    expect(cloneRes.status).toBe(201);
+    const cloned = cloneRes.body.data;
+    expect(cloned.id).not.toBe(courseId);
+    expect(cloned.status).toBe('DRAFT');
+    expect(cloned.instructors).toHaveLength(0);
+    expect(cloned.certificateAvailable).toBe(false);
+
+    const modulesRes = await request(app).get(`/api/v1/lms/admin/courses/${cloned.id}/modules`).set('Authorization', `Bearer ${admin.accessToken}`);
+    expect(modulesRes.body.data).toHaveLength(0);
+
+    const bankRes = await request(app).get(`/api/v1/lms/admin/courses/${cloned.id}/question-bank`).set('Authorization', `Bearer ${admin.accessToken}`);
+    expect(bankRes.status).toBe(200);
+    expect(bankRes.body.data).toHaveLength(2);
+    const copiedApproved = bankRes.body.data.find((i: any) => i.prompt === 'Bank question 1');
+    expect(copiedApproved.reviewStatus).toBe('APPROVED');
+    expect(copiedApproved.category).toBe('basics');
+    expect(copiedApproved.difficulty).toBe('EASY');
+    expect(copiedApproved.usageCount).toBe(0); // fresh lineage — usage history belongs to the original
+    expect(copiedApproved.version).toBe(1);
+    expect(copiedApproved.options).toHaveLength(2);
+
+    // The source course's own bank items must be untouched by the clone.
+    const sourceBankRes = await request(app).get(`/api/v1/lms/admin/courses/${courseId}/question-bank`).set('Authorization', `Bearer ${admin.accessToken}`);
+    expect(sourceBankRes.body.data).toHaveLength(2);
   });
 
   it('rejects a duplicate slug with a conflict', async () => {

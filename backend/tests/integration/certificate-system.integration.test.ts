@@ -217,7 +217,12 @@ describe('Certificate eligibility (FR-081)', () => {
     const enrollmentCondition = res.body.data.conditions.find((c: any) => c.key === 'enrollmentCompleted');
     expect(enrollmentCondition.satisfied).toBe(false);
     // Honest-scope-reduction: conditions this codebase cannot verify are reported, never assumed true.
-    expect(res.body.data.notApplicable).toEqual(expect.arrayContaining(['attendanceThreshold', 'finalProjectApproved', 'paymentSettled']));
+    expect(res.body.data.notApplicable).toEqual(expect.arrayContaining(['attendanceThreshold', 'paymentSettled']));
+    // 004 Project-based Learning batch (FR-077): this course has no PUBLISHED
+    // project at all, so `finalProjectApproved` is correctly ABSENT from both
+    // `conditions` (nothing to check) and `notApplicable` (not a platform-wide
+    // gap anymore — it's a real, owned signal, just not relevant to this course).
+    expect(res.body.data.conditions.find((c: any) => c.key === 'finalProjectApproved')).toBeUndefined();
   });
 
   it('reports ineligible when the course does not offer a certificate, even after completion', async () => {
@@ -252,7 +257,8 @@ describe('Certificate generation + historical immutability (FR-083, Constitution
     if (skip()) return;
     await ensureAdminAndCategory();
     const { courseId, lessonId } = await createPublishedCourseWithLesson(true);
-    const learner = await createUserWithRole(uniqueEmail('cert-learner-generate'), 'registered_free_user');
+    const learnerEmail = uniqueEmail('cert-learner-generate');
+    const learner = await createUserWithRole(learnerEmail, 'registered_free_user');
     await enrollAndCompleteCourse(learner.accessToken, courseId, lessonId);
 
     const genRes = await request(app).post(`/api/v1/lms/me/courses/${courseId}/certificate`).set('Authorization', `Bearer ${learner.accessToken}`);
@@ -264,6 +270,16 @@ describe('Certificate generation + historical immutability (FR-083, Constitution
     const listRes = await request(app).get('/api/v1/lms/me/certificates').set('Authorization', `Bearer ${learner.accessToken}`);
     expect(listRes.body.data).toHaveLength(1);
     expect(listRes.body.data[0].id).toBe(genRes.body.data.id);
+
+    // Cross-cutting polish batch (T121) — US5 acceptance scenario 2: "the learner is notified."
+    // Matches the certificate-issued email's OWN subject template
+    // ("Your certificate for ... is ready") specifically — a plain
+    // `.includes('certificate')` would also match the unrelated FR-025
+    // enrollment-confirmation email whenever the test course's title
+    // itself contains the word "Certificate" (as this course's does).
+    const issuedEmail = emailAdapter.sent.find((m: any) => m.to === learnerEmail.toLowerCase() && m.subject.toLowerCase().includes('your certificate for'));
+    expect(issuedEmail).toBeDefined();
+    expect(issuedEmail!.text).toContain(genRes.body.data.credentialId);
   });
 
   it('is idempotent — generating twice for the same enrollment returns the same certificate, never a duplicate', async () => {

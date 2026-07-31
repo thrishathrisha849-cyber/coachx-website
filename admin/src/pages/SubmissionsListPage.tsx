@@ -48,6 +48,7 @@ export function SubmissionsListPage() {
               <th className="pb-2">Attempt</th>
               <th className="pb-2">Status</th>
               <th className="pb-2">Score</th>
+              <th className="pb-2">Level</th>
               <th className="pb-2">Late</th>
               <th className="pb-2" />
             </tr>
@@ -59,17 +60,23 @@ export function SubmissionsListPage() {
                 <td className="py-2 text-slate-500">{s.attemptNumber}</td>
                 <td className="py-2">{s.status}</td>
                 <td className="py-2">{s.score ?? '—'}</td>
+                <td className="py-2">{s.outcomeLevel ?? '—'}</td>
                 <td className="py-2">{s.isLate ? 'Yes' : 'No'}</td>
                 <td className="py-2">
-                  <button onClick={() => navigate(`/submissions/${s.id}/review`)} className="text-brand-600 hover:text-brand-700 dark:text-brand-400">
-                    Review
-                  </button>
+                  {/* 004 Broader Assessment Types batch (FR-068) — a self-assessed submission has no instructor review action; `reviewSubmission` rejects it server-side. */}
+                  {s.isSelfAssessed ? (
+                    <span className="text-xs text-slate-400">Self-assessed</span>
+                  ) : (
+                    <button onClick={() => navigate(`/submissions/${s.id}/review`)} className="text-brand-600 hover:text-brand-700 dark:text-brand-400">
+                      Review
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
             {submissions.length === 0 && (
               <tr>
-                <td colSpan={6} className="py-4 text-slate-400">No submissions yet.</td>
+                <td colSpan={7} className="py-4 text-slate-400">No submissions yet.</td>
               </tr>
             )}
           </tbody>

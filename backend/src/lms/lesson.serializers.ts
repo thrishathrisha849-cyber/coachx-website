@@ -5,6 +5,7 @@ import type {
   PublicLearningActivity,
   PublicLessonDetail,
   PublicLessonSummary,
+  TranscriptSegment,
 } from './lesson.types';
 
 /**
@@ -38,6 +39,9 @@ type ActivityRow = {
   fileSizeBytes: number | null;
   embedProvider: string | null;
   embedResourceId: string | null;
+  captionsUrlEn: string | null;
+  captionsUrlTa: string | null;
+  transcriptSegments: unknown;
   status: string;
   createdBy: string | null;
   updatedBy: string | null;
@@ -58,6 +62,9 @@ export function toPublicActivity(row: ActivityRow): PublicLearningActivity {
     fileSizeBytes: row.fileSizeBytes,
     embedProvider: row.embedProvider,
     embedResourceId: row.embedResourceId,
+    captionsUrlEn: row.captionsUrlEn,
+    captionsUrlTa: row.captionsUrlTa,
+    transcriptSegments: (row.transcriptSegments as TranscriptSegment[] | null) ?? null,
   };
 }
 

@@ -19,7 +19,11 @@ export const createQuizSchema = z.object({
     title: z.string().trim().min(2).max(200),
     instructions: z.string().max(20000).optional(),
     quizType: z.enum(QUIZ_TYPES).default('GRADED'),
-    passingScorePercent: z.number().int().min(0).max(100).default(70),
+    // No `.default(70)` here — 004 LMS-wide Settings batch (FR-114):
+    // `quiz.service.ts`'s `createQuiz` sources the fallback from
+    // `LmsSettings.defaultQuizPassingScorePercent` (admin-configurable)
+    // instead of a fixed value baked into the validator.
+    passingScorePercent: z.number().int().min(0).max(100).optional(),
     maxAttempts: z.number().int().min(1).max(100).nullable().optional(),
     timeLimitMinutes: z.number().int().min(1).max(600).nullable().optional(),
     randomizeQuestions: z.boolean().default(false),

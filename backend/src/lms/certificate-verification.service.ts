@@ -1,5 +1,5 @@
 import { AppError } from '../utils/app-error';
-import { withTransaction } from '../database/transaction';
+import { withTransaction, type TransactionClient } from '../database/transaction';
 import { recordAuditEvent } from '../database/audit-event.repository';
 import {
   findCertificateByCredentialId,
@@ -39,15 +39,24 @@ export async function verifyCertificateByCredentialId(credentialId: string): Pro
  * FR-086 revocation. A revoked certificate row is never deleted — it stays
  * queryable (both by admins and via public verification, which will report
  * `REVOKED`) forever, per Historical Immutability.
+ *
+ * Accepts an optional `tx` (004 Academic-integrity investigation batch) so
+ * `academic-integrity.service.ts`'s `flagForInvestigation` can compose this
+ * revocation into its own single transaction alongside the case-creation
+ * write — `withTransaction` always opens a brand-new transaction on the
+ * global client, so calling this WITHOUT threading `tx` through from
+ * inside another `withTransaction` callback would silently run as a
+ * second, independent transaction, breaking atomicity between "case
+ * created" and "certificate revoked."
  */
-export async function revokeCertificate(certificateId: string, reason: string, actorId: string): Promise<void> {
-  const certificate = await findCertificateById(certificateId);
+export async function revokeCertificate(certificateId: string, reason: string, actorId: string, tx?: TransactionClient): Promise<void> {
+  const certificate = await findCertificateById(certificateId, tx);
   if (!certificate) throw AppError.notFound('Certificate not found');
   if (certificate.status === 'REVOKED') {
     throw AppError.conflict('This certificate has already been revoked');
   }
 
-  await withTransaction(async (tx) => {
+  const run = async (activeTx: TransactionClient) => {
     await updateCertificate(
       certificateId,
       {
@@ -56,7 +65,7 @@ export async function revokeCertificate(certificateId: string, reason: string, a
         revokedBy: actorId,
         revokedReason: reason,
       },
-      tx,
+      activeTx,
     );
 
     await recordAuditEvent(
@@ -70,9 +79,15 @@ export async function revokeCertificate(certificateId: string, reason: string, a
         beforeState: { status: certificate.status },
         afterState: { status: 'REVOKED' },
       },
-      tx,
+      activeTx,
     );
-  });
+  };
+
+  if (tx) {
+    await run(tx);
+  } else {
+    await withTransaction(run);
+  }
 }
 
 export async function listCertificatesForCourseAdmin(courseId: string): Promise<AdminCertificateSummary[]> {

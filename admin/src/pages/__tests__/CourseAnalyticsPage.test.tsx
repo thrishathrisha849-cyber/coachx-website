@@ -24,7 +24,7 @@ const analytics: lmsApi.CourseAnalytics = {
   certificateRate: 100,
   deviceDistribution: null,
   languageDistribution: null,
-  notApplicable: ['refundCorrelation', 'deviceDistribution', 'languageDistribution'],
+  notApplicable: ['refundCorrelation', 'languageDistribution'],
 };
 
 const atRiskLearner: lmsApi.AtRiskAssessment = {
@@ -88,6 +88,25 @@ describe('CourseAnalyticsPage (Learning Analytics & At-Risk Detection batch)', (
     expect(screen.getByText('50%')).toBeInTheDocument();
     expect(screen.getByText('Lesson 1')).toBeInTheDocument();
     expect(screen.getByText('No at-risk learners detected.')).toBeInTheDocument();
+  });
+
+  it('shows "no telemetry yet" when deviceDistribution is null', async () => {
+    vi.mocked(lmsApi.getCourseAnalyticsAdmin).mockResolvedValue(analytics);
+    vi.mocked(lmsApi.getCourseAtRiskLearnersAdmin).mockResolvedValue([]);
+    renderPage();
+
+    expect(await screen.findByText('No video playback telemetry recorded yet.')).toBeInTheDocument();
+  });
+
+  it('renders real device-bucket counts (004 PiP + Video Playback Telemetry batch, FR-040)', async () => {
+    vi.mocked(lmsApi.getCourseAnalyticsAdmin).mockResolvedValue({ ...analytics, deviceDistribution: { desktop: 7, mobile: 3 } });
+    vi.mocked(lmsApi.getCourseAtRiskLearnersAdmin).mockResolvedValue([]);
+    renderPage();
+
+    const desktopLabel = await screen.findByText('desktop');
+    expect(desktopLabel.parentElement).toHaveTextContent('7');
+    const mobileLabel = screen.getByText('mobile');
+    expect(mobileLabel.parentElement).toHaveTextContent('3');
   });
 
   it('lists at-risk learners with their signals and recommended revision, and drills into learner analytics on demand', async () => {
